@@ -1,0 +1,6 @@
+{
+  "name": "MetaTrader Bubble",
+  "description": "MQL Bridge EA controller and Android Floating Bubble Control Panel for MetaTrader",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
