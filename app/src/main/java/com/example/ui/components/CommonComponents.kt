@@ -38,6 +38,7 @@ fun StatusBadge(
 ) {
     val (color, text) = when (status) {
         ConnectionStatus.CONNECTED -> StatusOnline to "CONNECTED (LIVE)"
+        ConnectionStatus.LISTENING -> GoldAccent to "SERVER ACTIVE (WAITING EA)"
         ConnectionStatus.SIMULATED -> GoldAccent to "SIMULATOR ACTIVE"
         ConnectionStatus.CONNECTING -> StatusConnecting to "CONNECTING..."
         ConnectionStatus.ERROR -> StatusError to "ERROR"

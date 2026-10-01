@@ -156,6 +156,7 @@ fun FloatingPanelWindow(
 
     val statusDotColor = when (status) {
         ConnectionStatus.CONNECTED -> BuyGreen
+        ConnectionStatus.LISTENING -> GoldAccent
         ConnectionStatus.SIMULATED -> GoldAccent
         ConnectionStatus.CONNECTING -> StatusConnecting
         ConnectionStatus.ERROR -> SellRed

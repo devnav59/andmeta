@@ -3,22 +3,17 @@ package com.example.mql
 object MqlCodeProvider {
 
     val guideTextFa: String = """
-راهنمای راه‌اندازی بدون خطا (Error-Free) اکسپرت متاتریدر:
+راهنمای اتصال به متاتریدر در Winlator (روی همین گوشی) یا PC:
 
-۱. فایل اکسپرت (MetaTrader_Bridge_EA.mq5 برای متاتریدر ۵ یا .mq4 برای متاتریدر ۴) را کپی کنید:
-   - در متاتریدر: File -> Open Data Folder -> MQL5 (یا MQL4) -> Experts
-۲. در متاتریدر، تنظیمات را باز کنید (کلیدهای میانبر Ctrl + O):
-   - به تب "Expert Advisors" بروید.
-   - تیک گزینه "Allow Algo Trading" را فعال کنید.
-   - تیک گزینه "Allow WebRequest for listed URL" را فعال کرده و آدرس زیر را اضافه کنید:
-     http://*
-     یا آدرس IP گوشی شما در شبکه وای‌فای (مثلاً http://192.168.1.100:8080)
-۳. اکسپرت را در متاتریدر کامپایل (کلید F7) کنید (بدون هیچ‌گونه خطای سینتکسی کامپایل خواهد شد).
-۴. اکسپرت را روی یکی از نمودارها (مانند EURUSD) درگ کنید.
-۵. در پنجره پارامترهای ورودی اکسپرت:
-   - مقدار InpServerHost را روی IP گوشی اندروید یا سیستم خود بگذارید.
-   - مقدار InpServerPort را روی 8080 بگذارید.
-۶. در اپلیکیشن اندروید، دکمه LAUNCH BUBBLE را بزنید تا پنل شناور فعال شود.
+★ اجرای متاتریدر درون Winlator (روی همین موبایل):
+۱. در متاتریدر Winlator، اکسپرت MetaTrader_Bridge_EA.mq5 (یا mq4) را در پوشه Experts کپی و با F7 کامپایل کنید.
+۲. اکسپرت را روی چارت بیندازید.
+۳. در تب Inputs پارامترها را این‌گونه تنظیم کنید:
+   - مقدار InpServerHost: عدد 127.0.0.1 (یا 10.0.2.2 یا IP وای‌فای گوشی)
+   - مقدار InpServerPort: عدد 8080
+   - گزینه InpUseSocket: برابر با true (سوکت خام - مستقیم‌ترین و بدون خطاترین روش در Winlator)
+۴. در متاتریدر کلیدهای Ctrl + O را بزنید و در تب Expert Advisors تیک Allow Algo Trading و Allow DLL imports را بزنید.
+۵. در این اپلیکیشن، دکمه LAUNCH BUBBLE را بزنید؛ اتصال بلافاصله برقرار شده و چراغ به رنگ سبز تغییر می‌کند!
     """.trimIndent()
 
     val guideTextEn: String = """

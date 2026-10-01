@@ -55,6 +55,7 @@ enum class OrderType(val displayName: String, val isPending: Boolean) {
 enum class ConnectionStatus(val label: String) {
     DISCONNECTED("Disconnected"),
     CONNECTING("Connecting..."),
+    LISTENING("Server Active (Awaiting EA)"),
     CONNECTED("Connected (Live)"),
     SIMULATED("Simulated Mode"),
     ERROR("Connection Failed")

@@ -1,30 +1,31 @@
 //+------------------------------------------------------------------+
 //|                                     MetaTrader_Bridge_EA.mq5    |
 //|                    Copyright 2026, MetaTrader Floating Bubble    |
-//|                   Production-Ready MQL5 Bridge for Android App   |
+//|         Production-Ready MQL5 Bridge (Optimized for Winlator)    |
 //+------------------------------------------------------------------+
 #property copyright "MetaTrader Floating Bubble"
 #property link      "https://github.com"
-#property version   "2.00"
+#property version   "2.10"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
 #include <Trade\SymbolInfo.mqh>
 
 //--- Input parameters
-input string   InpServerHost     = "192.168.1.100"; // Android Phone or Bridge IP
+input string   InpServerHost     = "127.0.0.1";     // Android IP (127.0.0.1 or 10.0.2.2 for Winlator)
 input int      InpServerPort     = 8080;            // Server Port
 input int      InpTimerSeconds   = 1;               // Sync Interval (Seconds)
 input ulong    InpMagicNumber    = 101010;          // Magic Number
 input int      InpSlippage       = 20;              // Slippage Points
-input bool     InpUseWebRequest  = true;            // True = WebRequest (Recommended), False = Socket
+input bool     InpUseSocket      = true;            // True = Raw Socket (Best for Winlator/Wine)
+input bool     InpUseWebRequest  = false;           // True = WebRequest (Requires Wine Internet)
 
 CTrade         trade;
 CPositionInfo  posInfo;
 CSymbolInfo    symInfo;
 
 datetime       g_last_push_time  = 0;
-int            g_client_socket   = -1; // -1 represents invalid socket handle
+int            g_client_socket   = -1;
 
 //+------------------------------------------------------------------+
 //| Helper: Calculate Exact Pip Value based on Digits                |
@@ -64,7 +65,7 @@ int OnInit()
    SetSafeFillingType();
 
    EventSetTimer(InpTimerSeconds);
-   Print("[+] MetaTrader 5 Bridge EA initialized. Target: ", InpServerHost, ":", InpServerPort);
+   Print("[+] MetaTrader 5 Bridge EA initialized. Target: ", InpServerHost, ":", InpServerPort, " Mode: ", (InpUseSocket ? "Raw Socket" : "WebRequest"));
    return INIT_SUCCEEDED;
 }
 
@@ -148,13 +149,57 @@ void SyncWithAndroid()
    g_last_push_time = TimeCurrent();
    string jsonPayload = BuildPositionsJson();
 
-   if(InpUseWebRequest)
+   if(InpUseSocket)
+   {
+      SyncViaSocket(jsonPayload);
+   }
+   else if(InpUseWebRequest)
    {
       SyncViaWebRequest(jsonPayload);
    }
-   else
+}
+
+//+------------------------------------------------------------------+
+//| Sync via native MQL5 Client Socket (Winlator Preferred)         |
+//+------------------------------------------------------------------+
+void SyncViaSocket(string jsonPayload)
+{
+   if(g_client_socket < 0 || !SocketIsConnected(g_client_socket))
    {
-      SyncViaSocket(jsonPayload);
+      if(g_client_socket >= 0) SocketClose(g_client_socket);
+      g_client_socket = SocketCreate();
+      if(g_client_socket < 0) return;
+
+      if(!SocketConnect(g_client_socket, InpServerHost, InpServerPort, 1000))
+      {
+         SocketClose(g_client_socket);
+         g_client_socket = -1;
+         return;
+      }
+   }
+
+   string request = jsonPayload + "\n";
+   uchar sendData[];
+   StringToCharArray(request, sendData, 0, StringLen(request), CP_UTF8);
+   int sent = SocketSend(g_client_socket, sendData, ArraySize(sendData));
+   if(sent <= 0)
+   {
+      SocketClose(g_client_socket);
+      g_client_socket = -1;
+      return;
+   }
+
+   uint readable = SocketIsReadable(g_client_socket);
+   if(readable > 0)
+   {
+      uchar buffer[];
+      ArrayResize(buffer, (int)readable);
+      int received = SocketRead(g_client_socket, buffer, readable, 500);
+      if(received > 0)
+      {
+         string resp = CharArrayToString(buffer, 0, received, CP_UTF8);
+         ProcessJsonCommands(resp);
+      }
    }
 }
 
@@ -165,16 +210,16 @@ void SyncViaWebRequest(string jsonPayload)
 {
    string url = "http://" + InpServerHost + ":" + IntegerToString(InpServerPort) + "/api/positions";
    string headers = "Content-Type: application/json\r\nAccept: application/json\r\n";
-   
+
    char postData[];
    StringToCharArray(jsonPayload, postData, 0, StringLen(jsonPayload), CP_UTF8);
-   
+
    char result[];
    string resultHeaders;
-   
+
    ResetLastError();
    int res = WebRequest("POST", url, headers, 1000, postData, result, resultHeaders);
-   
+
    if(res == 200)
    {
       string responseStr = CharArrayToString(result, 0, ArraySize(result), CP_UTF8);
@@ -186,57 +231,9 @@ void SyncViaWebRequest(string jsonPayload)
    else if(res == -1)
    {
       int err = GetLastError();
-      if(err == 4060) // ERR_FUNCTION_NOT_ALLOWED
+      if(err == 4060)
       {
          Print("[-] WebRequest Error 4060: Please add URL in Tools -> Options -> Expert Advisors -> Allow WebRequest");
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Sync via native MQL5 Client Socket                               |
-//+------------------------------------------------------------------+
-void SyncViaSocket(string jsonPayload)
-{
-   if(g_client_socket < 0 || !SocketIsConnected(g_client_socket))
-   {
-      if(g_client_socket >= 0) SocketClose(g_client_socket);
-      g_client_socket = SocketCreate();
-      if(g_client_socket < 0) return;
-      
-      if(!SocketConnect(g_client_socket, InpServerHost, InpServerPort, 1000))
-      {
-         SocketClose(g_client_socket);
-         g_client_socket = -1;
-         return;
-      }
-   }
-
-   string request = "POST /api/positions HTTP/1.1\r\n" +
-                    "Host: " + InpServerHost + ":" + IntegerToString(InpServerPort) + "\r\n" +
-                    "Content-Type: application/json\r\n" +
-                    "Content-Length: " + IntegerToString(StringLen(jsonPayload)) + "\r\n\r\n" +
-                    jsonPayload;
-
-   uchar sendData[];
-   StringToCharArray(request, sendData, 0, StringLen(request), CP_UTF8);
-   SocketSend(g_client_socket, sendData, ArraySize(sendData));
-
-   uint readable = SocketIsReadable(g_client_socket);
-   if(readable > 0)
-   {
-      uchar buffer[];
-      ArrayResize(buffer, (int)readable);
-      int received = SocketRead(g_client_socket, buffer, readable, 500);
-      if(received > 0)
-      {
-         string resp = CharArrayToString(buffer, 0, received, CP_UTF8);
-         int bodyPos = StringFind(resp, "\r\n\r\n");
-         if(bodyPos >= 0)
-         {
-            string body = StringSubstr(resp, bodyPos + 4);
-            ProcessJsonCommands(body);
-         }
       }
    }
 }

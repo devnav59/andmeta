@@ -23,12 +23,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CastConnected
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Lan
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sensors
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -58,6 +60,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ConnectionStatus
+import com.example.network.NetworkUtils
 import com.example.repository.TradingRepository
 import com.example.ui.components.StatusBadge
 import com.example.ui.theme.BuyGreen
@@ -86,11 +89,13 @@ fun ConnectionTab(
     var inputIp by remember(repoIp) { mutableStateOf(repoIp) }
     var inputPort by remember(repoPort) { mutableStateOf(repoPort.toString()) }
 
+    val detectedIps = remember { NetworkUtils.getDeviceIpAddresses() }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(if (isCompactOverlay) 10.dp else 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(if (isCompactOverlay) 8.dp else 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         // Status Card
         item {
@@ -102,24 +107,34 @@ fun ConnectionTab(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(14.dp),
+                        .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "MetaTrader Bridge Status",
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             color = TextSecondary,
                             fontWeight = FontWeight.Medium
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = if (isSim) "Internal Simulator (Port 8080)" else "ws://$inputIp:$inputPort",
-                            fontSize = 14.sp,
+                            text = when (status) {
+                                ConnectionStatus.CONNECTED -> "CONNECTED TO METATRADER"
+                                ConnectionStatus.LISTENING -> "LISTENING ON 0.0.0.0:$repoPort"
+                                ConnectionStatus.SIMULATED -> "SIMULATOR ACTIVE"
+                                else -> "OFFLINE / DISCONNECTED"
+                            },
+                            fontSize = 13.sp,
                             color = TextPrimary,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = if (status == ConnectionStatus.LISTENING) "آماده دریافت داده از Winlator (Port $repoPort)" else "Local Bridge Server Port $repoPort",
+                            fontSize = 10.sp,
+                            color = if (status == ConnectionStatus.LISTENING) GoldAccent else TextMuted
                         )
                     }
                     StatusBadge(status = status)
@@ -127,7 +142,101 @@ fun ConnectionTab(
             }
         }
 
-        // Connection Form
+        // Winlator Helper Card (Special for running MT on same mobile phone)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SlateCardElevated),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, GoldAccent.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Smartphone,
+                                contentDescription = null,
+                                tint = GoldAccent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "راهنمای اتصال به Winlator (روی همین گوشی)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                        }
+
+                        Button(
+                            onClick = { TradingRepository.testPingInternalServer() },
+                            colors = ButtonDefaults.buttonColors(containerColor = SlateCard),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Icon(Icons.Default.NetworkCheck, contentDescription = null, tint = BuyGreen, modifier = Modifier.size(12.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("تست سرور داخلی", fontSize = 10.sp, color = BuyGreen, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Text(
+                        text = "سرور این اپلیکیشن روی پورت ۸۰۸۰ در پس‌زمینه همین گوشی فعال است. در متاتریدر Winlator در تنظیمات اکسپرت InpServerHost را روی یکی از این آی‌پی‌ها بگذارید:",
+                        fontSize = 11.sp,
+                        color = TextSecondary,
+                        lineHeight = 16.sp
+                    )
+
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        detectedIps.forEach { info ->
+                            val isSelected = inputIp == info.ip
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) GoldAccent else SlateDark)
+                                    .border(1.dp, if (isSelected) GoldAccent else SlateBorder, RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        inputIp = info.ip
+                                        val port = inputPort.toIntOrNull() ?: 8080
+                                        TradingRepository.setServerConfig(info.ip, port)
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 5.dp)
+                            ) {
+                                Column {
+                                    Text(
+                                        text = info.ip,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) Color.Black else TextPrimary,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                    Text(
+                                        text = info.label,
+                                        fontSize = 9.sp,
+                                        color = if (isSelected) Color.Black.copy(alpha = 0.8f) else TextMuted
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Connection Form Card
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SlateCard),
@@ -137,13 +246,13 @@ fun ConnectionTab(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(14.dp),
+                        .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "WebSocket Server Parameters",
-                        fontSize = 13.sp,
-                        color = GoldAccent,
+                        text = "تنظیمات آدرس سرور (Server Address)",
+                        fontSize = 12.sp,
+                        color = TextPrimary,
                         fontWeight = FontWeight.Bold
                     )
 
@@ -158,9 +267,9 @@ fun ConnectionTab(
                                 val port = inputPort.toIntOrNull() ?: 8080
                                 TradingRepository.setServerConfig(it, port)
                             },
-                            label = { Text("PC / MT Server IP", fontSize = 11.sp) },
+                            label = { Text("Server Host / IP", fontSize = 11.sp) },
                             singleLine = true,
-                            enabled = !isSim && status != ConnectionStatus.CONNECTED,
+                            enabled = !isSim,
                             modifier = Modifier
                                 .weight(2f)
                                 .testTag("server_ip_input"),
@@ -175,7 +284,7 @@ fun ConnectionTab(
                                     Icons.Default.Lan,
                                     contentDescription = "IP",
                                     tint = TextSecondary,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
                             }
                         )
@@ -189,7 +298,7 @@ fun ConnectionTab(
                             },
                             label = { Text("Port", fontSize = 11.sp) },
                             singleLine = true,
-                            enabled = !isSim && status != ConnectionStatus.CONNECTED,
+                            enabled = !isSim,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier
                                 .weight(1f)
@@ -203,55 +312,16 @@ fun ConnectionTab(
                         )
                     }
 
-                    // Quick presets
-                    if (!isCompactOverlay) {
-                        Text(
-                            text = "Quick Presets:",
-                            fontSize = 11.sp,
-                            color = TextMuted
-                        )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            listOf(
-                                "192.168.1.100" to "Local Wi-Fi",
-                                "10.0.2.2" to "Emulator Host",
-                                "127.0.0.1" to "Localhost"
-                            ).forEach { (ip, label) ->
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(SlateCardElevated)
-                                        .border(1.dp, SlateBorder, RoundedCornerShape(8.dp))
-                                        .clickable(enabled = !isSim && status != ConnectionStatus.CONNECTED) {
-                                            inputIp = ip
-                                            val port = inputPort.toIntOrNull() ?: 8080
-                                            TradingRepository.setServerConfig(ip, port)
-                                        }
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text(
-                                        text = "$ip ($label)",
-                                        fontSize = 10.sp,
-                                        color = TextSecondary,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                            }
-                        }
-                    }
-
                     // Connect / Disconnect Buttons
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        val isConnectedOrSim = status == ConnectionStatus.CONNECTED || status == ConnectionStatus.SIMULATED
+                        val isConnected = status == ConnectionStatus.CONNECTED
 
                         Button(
                             onClick = {
-                                if (isConnectedOrSim) {
+                                if (isConnected) {
                                     TradingRepository.disconnect()
                                 } else {
                                     val port = inputPort.toIntOrNull() ?: 8080
@@ -260,26 +330,26 @@ fun ConnectionTab(
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isConnectedOrSim) SellRed else BuyGreen
+                                containerColor = if (isConnected) SellRed else BuyGreen
                             ),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
                                 .weight(1f)
-                                .height(44.dp)
+                                .height(42.dp)
                                 .testTag("connect_disconnect_button")
                         ) {
                             Icon(
-                                if (isConnectedOrSim) Icons.Default.PowerSettingsNew else Icons.Default.CastConnected,
+                                if (isConnected) Icons.Default.PowerSettingsNew else Icons.Default.CastConnected,
                                 contentDescription = null,
-                                tint = if (isConnectedOrSim) Color.White else Color.Black,
-                                modifier = Modifier.size(18.dp)
+                                tint = if (isConnected) Color.White else Color.Black,
+                                modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = if (isConnectedOrSim) "DISCONNECT" else "CONNECT TO EA",
-                                color = if (isConnectedOrSim) Color.White else Color.Black,
+                                text = if (isConnected) "DISCONNECT" else "START / REFRESH SERVER",
+                                color = if (isConnected) Color.White else Color.Black,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
+                                fontSize = 11.sp
                             )
                         }
                     }
@@ -297,7 +367,7 @@ fun ConnectionTab(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(14.dp),
+                        .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -312,7 +382,7 @@ fun ConnectionTab(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = "شبیه‌ساز معاملات (Interactive Test Mode)",
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 color = TextPrimary,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -320,7 +390,7 @@ fun ConnectionTab(
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = "تست لحظه‌ای اردرها، تغییر پیپ SL/TP و نوسان زنده سود بدون نیاز به متاتریدر روشن",
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             color = TextSecondary
                         )
                     }
@@ -352,7 +422,7 @@ fun ConnectionTab(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp)
+                        .padding(10.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -360,8 +430,8 @@ fun ConnectionTab(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "TERMINAL LOGS",
-                            fontSize = 11.sp,
+                            text = "COMMUNICATION LOGS",
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = TextMuted,
                             letterSpacing = 1.sp
@@ -373,21 +443,21 @@ fun ConnectionTab(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(if (isCompactOverlay) 90.dp else 130.dp)
+                            .height(if (isCompactOverlay) 80.dp else 120.dp)
                     ) {
                         LazyColumn {
                             items(logs.take(15)) { log ->
                                 Text(
                                     text = log,
                                     fontSize = 10.sp,
-                                    color = if (log.contains("error", ignoreCase = true) || log.contains("failed", ignoreCase = true)) {
+                                    color = if (log.contains("fail", ignoreCase = true) || log.contains("error", ignoreCase = true)) {
                                         SellRed
-                                    } else if (log.contains("connected", ignoreCase = true) || log.contains("executed", ignoreCase = true)) {
+                                    } else if (log.contains("pass", ignoreCase = true) || log.contains("connected", ignoreCase = true) || log.contains("running", ignoreCase = true)) {
                                         BuyGreen
                                     } else {
                                         TextSecondary
