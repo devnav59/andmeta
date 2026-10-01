@@ -27,9 +27,14 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -58,7 +63,13 @@ fun EaGuideTab(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var copiedMql5 by remember { mutableStateOf(false) }
+    var selectedCodeTab by remember { mutableIntStateOf(0) } // 0 = MQL5, 1 = MQL4
+    var copied by remember { mutableStateOf(false) }
+
+    val currentCode = when (selectedCodeTab) {
+        0 -> MqlCodeProvider.mql5Code
+        else -> MqlCodeProvider.mql4Code
+    }
 
     LazyColumn(
         modifier = modifier
@@ -88,7 +99,7 @@ fun EaGuideTab(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "راهنمای راه‌اندازی اکسپرت متاتریدر (MQL Bridge)",
+                            text = "راهنمای راه‌اندازی و کامپایل بدون خطا",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimary
@@ -99,13 +110,13 @@ fun EaGuideTab(
                         text = MqlCodeProvider.guideTextFa,
                         fontSize = 12.sp,
                         color = TextSecondary,
-                        lineHeight = 19.sp
+                        lineHeight = 20.sp
                     )
                 }
             }
         }
 
-        // Copy EA Code Card
+        // Code Viewer Card
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SlateCard),
@@ -118,43 +129,69 @@ fun EaGuideTab(
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // Version Tab Selector
+                    TabRow(
+                        selectedTabIndex = selectedCodeTab,
+                        containerColor = SlateCardElevated,
+                        contentColor = BuyGreen,
+                        indicator = { tabPositions ->
+                            TabRowDefaults.SecondaryIndicator(
+                                Modifier.tabIndicatorOffset(tabPositions[selectedCodeTab]),
+                                color = BuyGreen,
+                                height = 2.dp
+                            )
+                        }
+                    ) {
+                        Tab(
+                            selected = selectedCodeTab == 0,
+                            onClick = { selectedCodeTab = 0; copied = false },
+                            text = { Text("MetaTrader 5 (MQL5)", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                        )
+                        Tab(
+                            selected = selectedCodeTab == 1,
+                            onClick = { selectedCodeTab = 1; copied = false },
+                            text = { Text("MetaTrader 4 (MQL4)", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                        )
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "کد سورس MQL5 Bridge EA",
+                            text = if (selectedCodeTab == 0) "MetaTrader_Bridge_EA.mq5" else "MetaTrader_Bridge_EA.mq4",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            color = GoldAccent
+                            color = GoldAccent,
+                            fontFamily = FontFamily.Monospace
                         )
 
                         Button(
                             onClick = {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("MQL5 Code", MqlCodeProvider.mql5Code)
+                                val clip = ClipData.newPlainText("EA Code", currentCode)
                                 clipboard.setPrimaryClip(clip)
-                                copiedMql5 = true
+                                copied = true
                             },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (copiedMql5) BuyGreen else SlateCardElevated
+                                containerColor = if (copied) BuyGreen else SlateCardElevated
                             ),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
                             Icon(
-                                if (copiedMql5) Icons.Default.Check else Icons.Default.ContentCopy,
+                                if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
                                 contentDescription = null,
-                                tint = if (copiedMql5) Color.Black else TextPrimary,
+                                tint = if (copied) Color.Black else TextPrimary,
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (copiedMql5) "COPIED!" else "COPY CODE",
+                                text = if (copied) "COPIED!" else "COPY CODE",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (copiedMql5) Color.Black else TextPrimary
+                                color = if (copied) Color.Black else TextPrimary
                             )
                         }
                     }
@@ -162,7 +199,7 @@ fun EaGuideTab(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(180.dp)
+                            .height(200.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(SlateDark)
                             .border(1.dp, SlateBorder, RoundedCornerShape(8.dp))
@@ -171,7 +208,7 @@ fun EaGuideTab(
                         LazyColumn {
                             item {
                                 Text(
-                                    text = MqlCodeProvider.mql5Code,
+                                    text = currentCode,
                                     fontSize = 10.sp,
                                     fontFamily = FontFamily.Monospace,
                                     color = TextSecondary,

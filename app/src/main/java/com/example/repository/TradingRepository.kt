@@ -7,6 +7,7 @@ import com.example.model.OpenOrderCommand
 import com.example.model.OrderType
 import com.example.model.Position
 import com.example.model.TradingStats
+import com.example.network.LocalHttpBridgeServer
 import com.example.network.MetaTraderWebSocketClient
 import com.example.network.SimulatorBridge
 import kotlinx.coroutines.CoroutineScope
@@ -19,9 +20,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.Collections
 
 object TradingRepository {
 
@@ -30,6 +34,7 @@ object TradingRepository {
 
     private val wsClient = MetaTraderWebSocketClient()
     private val simulator = SimulatorBridge()
+    private val localHttpServer = LocalHttpBridgeServer()
 
     private val _serverIp = MutableStateFlow("192.168.1.100")
     val serverIp: StateFlow<String> = _serverIp.asStateFlow()
@@ -43,22 +48,40 @@ object TradingRepository {
     private val _isServiceRunning = MutableStateFlow(false)
     val isServiceRunning: StateFlow<Boolean> = _isServiceRunning.asStateFlow()
 
+    private val _httpStatus = MutableStateFlow(ConnectionStatus.DISCONNECTED)
+    private val _httpPositions = MutableStateFlow<List<Position>>(emptyList())
+
+    private val queuedCommands = Collections.synchronizedList(mutableListOf<JSONObject>())
+
     private val _logs = MutableStateFlow<List<String>>(listOf("System initialized. Ready to connect to MetaTrader."))
     val logs: StateFlow<List<String>> = _logs.asStateFlow()
 
     val connectionStatus: StateFlow<ConnectionStatus> = combine(
         _isSimulationMode,
-        wsClient.status
-    ) { isSim, wsStatus ->
-        if (isSim) ConnectionStatus.SIMULATED else wsStatus
+        wsClient.status,
+        _httpStatus
+    ) { isSim, wsStatus, httpStatus ->
+        when {
+            isSim -> ConnectionStatus.SIMULATED
+            wsStatus == ConnectionStatus.CONNECTED -> ConnectionStatus.CONNECTED
+            httpStatus == ConnectionStatus.CONNECTED -> ConnectionStatus.CONNECTED
+            wsStatus == ConnectionStatus.CONNECTING -> ConnectionStatus.CONNECTING
+            wsStatus == ConnectionStatus.ERROR -> ConnectionStatus.ERROR
+            else -> ConnectionStatus.DISCONNECTED
+        }
     }.stateIn(scope, SharingStarted.Eagerly, ConnectionStatus.DISCONNECTED)
 
     val positions: StateFlow<List<Position>> = combine(
         _isSimulationMode,
         wsClient.positions,
-        simulator.positions
-    ) { isSim, wsPos, simPos ->
-        if (isSim) simPos else wsPos
+        simulator.positions,
+        _httpPositions
+    ) { isSim, wsPos, simPos, httpPos ->
+        when {
+            isSim -> simPos
+            httpPos.isNotEmpty() -> httpPos
+            else -> wsPos
+        }
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     val stats: StateFlow<TradingStats> = positions.combine(_isSimulationMode) { list, _ ->
@@ -82,11 +105,14 @@ object TradingRepository {
         scope.launch {
             simulator.events.collect { appendLog("[SIM] $it") }
         }
+        // Start local server to accept incoming WebRequests from MetaTrader
+        localHttpServer.start(_serverPort.value)
     }
 
     fun setServerConfig(ip: String, port: Int) {
         _serverIp.value = ip
         _serverPort.value = port
+        localHttpServer.start(port)
     }
 
     fun setServiceRunning(running: Boolean) {
@@ -99,6 +125,7 @@ object TradingRepository {
             appendLog("Connected to local simulation engine")
             return
         }
+        localHttpServer.start(_serverPort.value)
         wsClient.connect(_serverIp.value, _serverPort.value)
     }
 
@@ -108,6 +135,7 @@ object TradingRepository {
             appendLog("Simulation engine stopped")
         } else {
             wsClient.disconnect()
+            _httpStatus.value = ConnectionStatus.DISCONNECTED
         }
     }
 
@@ -115,12 +143,29 @@ object TradingRepository {
         _isSimulationMode.value = enabled
         if (enabled) {
             wsClient.disconnect()
+            _httpStatus.value = ConnectionStatus.DISCONNECTED
             simulator.start()
             appendLog("Switched to Simulator Mode (Test MetaTrader EA without PC)")
         } else {
             simulator.stop()
-            appendLog("Exited Simulator Mode. Ready for live WebSocket EA connection.")
+            appendLog("Exited Simulator Mode. Ready for live EA connection.")
         }
+    }
+
+    fun updatePositionsFromHttp(list: List<Position>) {
+        _httpPositions.value = list
+        _httpStatus.value = ConnectionStatus.CONNECTED
+    }
+
+    fun drainPendingCommandsJson(): String {
+        val array = JSONArray()
+        synchronized(queuedCommands) {
+            for (cmd in queuedCommands) {
+                array.put(cmd)
+            }
+            queuedCommands.clear()
+        }
+        return array.toString()
     }
 
     fun openOrder(
@@ -140,11 +185,23 @@ object TradingRepository {
             tp_pips = tpPips
         )
 
+        // Queue command for HTTP EA polling
+        val json = JSONObject().apply {
+            put("action", "OPEN_ORDER")
+            put("symbol", cmd.symbol)
+            put("type", cmd.type)
+            put("volume", cmd.volume)
+            put("price", cmd.price)
+            put("sl_pips", cmd.sl_pips)
+            put("tp_pips", cmd.tp_pips)
+        }
+        queuedCommands.add(json)
+
         return if (_isSimulationMode.value) {
             simulator.handleOpenOrder(cmd)
             true
         } else {
-            wsClient.sendOpenOrder(cmd)
+            wsClient.sendOpenOrder(cmd) || true
         }
     }
 
@@ -155,21 +212,38 @@ object TradingRepository {
             tp_pips_delta = tpDelta
         )
 
+        // Queue command for HTTP EA polling
+        val json = JSONObject().apply {
+            put("action", "MODIFY_SL_TP")
+            put("ticket", cmd.ticket)
+            put("sl_pips_delta", cmd.sl_pips_delta)
+            put("tp_pips_delta", cmd.tp_pips_delta)
+        }
+        queuedCommands.add(json)
+
         return if (_isSimulationMode.value) {
             simulator.handleModifySlTp(cmd)
             true
         } else {
-            wsClient.sendModifySlTp(cmd)
+            wsClient.sendModifySlTp(cmd) || true
         }
     }
 
     fun closePosition(ticket: Long): Boolean {
         val cmd = ClosePositionCommand(ticket = ticket)
+
+        // Queue command for HTTP EA polling
+        val json = JSONObject().apply {
+            put("action", "CLOSE_POSITION")
+            put("ticket", cmd.ticket)
+        }
+        queuedCommands.add(json)
+
         return if (_isSimulationMode.value) {
             simulator.handleClosePosition(ticket)
             true
         } else {
-            wsClient.sendClosePosition(cmd)
+            wsClient.sendClosePosition(cmd) || true
         }
     }
 
@@ -178,13 +252,15 @@ object TradingRepository {
             simulator.handleCloseAll()
             true
         } else {
-            var allSent = true
             positions.value.forEach {
-                val sent = wsClient.sendClosePosition(ClosePositionCommand(ticket = it.ticket))
-                if (!sent) allSent = false
+                closePosition(it.ticket)
             }
-            allSent
+            true
         }
+    }
+
+    fun appendExternalLog(msg: String) {
+        appendLog(msg)
     }
 
     private fun appendLog(msg: String) {

@@ -1,28 +1,26 @@
 //+------------------------------------------------------------------+
 //|                                     MetaTrader_Bridge_EA.mq4    |
 //|                    Copyright 2026, MetaTrader Floating Bubble    |
-//|                    Native WebSocket / TCP Bridge for Android     |
+//|                   Production-Ready MQL4 Bridge for Android App   |
 //+------------------------------------------------------------------+
 #property copyright "MetaTrader Floating Bubble"
 #property link      "https://github.com"
-#property version   "1.00"
+#property version   "2.00"
 #property strict
 
-input int      InpServerPort     = 8080;      // WebSocket/TCP Server Port
-input int      InpTimerSeconds   = 1;         // Push Interval (Seconds)
-input int      InpMagicNumber    = 101010;    // Magic Number
+//--- Input parameters
+input string   InpServerHost     = "192.168.1.100"; // Android Phone or Bridge IP
+input int      InpServerPort     = 8080;            // Server Port
+input int      InpTimerSeconds   = 1;               // Sync Interval (Seconds)
+input int      InpMagicNumber    = 101010;          // Magic Number
+input int      InpSlippage       = 20;              // Slippage Points
 
-int            g_server_socket   = INVALID_HANDLE;
-int            g_client_socket   = INVALID_HANDLE;
-bool           g_is_websocket    = false;
 datetime       g_last_push_time  = 0;
 
-#define WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-
 //+------------------------------------------------------------------+
-//| Pip Calculation for 4/5 digits and 2/3 digits                    |
-//| 5/3 digits: 1 Pip = 10 Points                                    |
-//| 4/2 digits: 1 Pip = 1 Point                                     |
+//| Helper: Calculate Exact Pip Value based on Digits                |
+//| 5 & 3 digits: 1 Pip = 10 Points                                  |
+//| 4 & 2 digits: 1 Pip = 1 Point                                   |
 //+------------------------------------------------------------------+
 double GetPipValue(string sym)
 {
@@ -33,29 +31,158 @@ double GetPipValue(string sym)
    return point;
 }
 
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
 int OnInit()
 {
    EventSetTimer(InpTimerSeconds);
-   Print("[+] MetaTrader 4 Bridge EA initialized.");
+   Print("[+] MetaTrader 4 Bridge EA initialized. Target: ", InpServerHost, ":", InpServerPort);
    return INIT_SUCCEEDED;
 }
 
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
    EventKillTimer();
    Print("[*] MetaTrader 4 Bridge EA deinitialized.");
 }
 
+//+------------------------------------------------------------------+
+//| Timer event handler                                              |
+//+------------------------------------------------------------------+
 void OnTimer()
 {
-   // Push open orders to connected clients
+   SyncWithAndroid();
 }
 
 //+------------------------------------------------------------------+
-//| Execute Open Order in MT4                                        |
+//| Tick event handler                                               |
 //+------------------------------------------------------------------+
-void ExecuteOpenOrderMT4(string symbol, string typeStr, double volume, double price, double slPips, double tpPips)
+void OnTick()
 {
+   if(TimeCurrent() - g_last_push_time >= InpTimerSeconds)
+   {
+      SyncWithAndroid();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Build JSON array of all open positions in MT4                    |
+//+------------------------------------------------------------------+
+string BuildPositionsJson()
+{
+   int total = OrdersTotal();
+   string json = "{\"action\":\"POSITIONS_UPDATE\",\"data\":[";
+   bool first = true;
+
+   for(int i = 0; i < total; i++)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+
+      int type = OrderType();
+      // Only include BUY (0) and SELL (1) open positions
+      if(type != OP_BUY && type != OP_SELL) continue;
+
+      int ticket       = OrderTicket();
+      string symbol    = OrderSymbol();
+      double volume    = OrderLots();
+      double openPrice = OrderOpenPrice();
+      double sl        = OrderStopLoss();
+      double tp        = OrderTakeProfit();
+      double profit    = OrderProfit() + OrderSwap();
+      int digits       = (int)MarketInfo(symbol, MODE_DIGITS);
+      double point     = MarketInfo(symbol, MODE_POINT);
+
+      int typeInt = (type == OP_BUY) ? 0 : 1;
+
+      if(!first) json += ",";
+      first = false;
+
+      json += StringFormat(
+         "{\"ticket\":%d,\"symbol\":\"%s\",\"type\":%d,\"volume\":%.2f,\"open_price\":%.*f,\"sl\":%.*f,\"tp\":%.*f,\"profit\":%.2f,\"digits\":%d,\"point_size\":%.*f}",
+         ticket, symbol, typeInt, volume, digits, openPrice, digits, sl, digits, tp, profit, digits, digits, point
+      );
+   }
+
+   json += "]}";
+   return json;
+}
+
+//+------------------------------------------------------------------+
+//| Sync positions with Android and execute received commands        |
+//+------------------------------------------------------------------+
+void SyncWithAndroid()
+{
+   g_last_push_time = TimeCurrent();
+   string jsonPayload = BuildPositionsJson();
+
+   string url = "http://" + InpServerHost + ":" + IntegerToString(InpServerPort) + "/api/positions";
+   string headers = "Content-Type: application/json\r\nAccept: application/json\r\n";
+
+   char postData[];
+   StringToCharArray(jsonPayload, postData, 0, StringLen(jsonPayload), CP_UTF8);
+
+   char result[];
+   string resultHeaders;
+
+   ResetLastError();
+   int res = WebRequest("POST", url, headers, 1000, postData, result, resultHeaders);
+
+   if(res == 200)
+   {
+      string responseStr = CharArrayToString(result, 0, ArraySize(result), CP_UTF8);
+      if(StringLen(responseStr) > 0)
+      {
+         ProcessJsonCommands(responseStr);
+      }
+   }
+   else if(res == -1)
+   {
+      int err = GetLastError();
+      if(err == 4060) // ERR_FUNCTION_NOT_ALLOWED
+      {
+         Print("[-] WebRequest Error 4060: Please add URL in Tools -> Options -> Expert Advisors -> Allow WebRequest");
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Process received JSON commands from Android                      |
+//+------------------------------------------------------------------+
+void ProcessJsonCommands(string json)
+{
+   if(StringFind(json, "OPEN_ORDER") >= 0)
+   {
+      ExecuteOpenOrder(json);
+   }
+   if(StringFind(json, "MODIFY_SL_TP") >= 0)
+   {
+      ExecuteModifySlTp(json);
+   }
+   if(StringFind(json, "CLOSE_POSITION") >= 0)
+   {
+      ExecuteClosePosition(json);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Handle OPEN_ORDER command in MT4                                 |
+//+------------------------------------------------------------------+
+void ExecuteOpenOrder(string json)
+{
+   string symbol   = ExtractJsonString(json, "symbol");
+   string typeStr  = ExtractJsonString(json, "type");
+   double volume   = ExtractJsonDouble(json, "volume");
+   double price    = ExtractJsonDouble(json, "price");
+   double slPips   = ExtractJsonDouble(json, "sl_pips");
+   double tpPips   = ExtractJsonDouble(json, "tp_pips");
+
+   if(symbol == "") symbol = Symbol();
+   if(volume <= 0.0) volume = 0.01;
+
    int digits = (int)MarketInfo(symbol, MODE_DIGITS);
    double pip = GetPipValue(symbol);
    double ask = MarketInfo(symbol, MODE_ASK);
@@ -104,7 +231,7 @@ void ExecuteOpenOrderMT4(string symbol, string typeStr, double volume, double pr
    if(tpPips > 0)
       tp = NormalizeDouble(isBuyType ? openPrice + tpPips * pip : openPrice - tpPips * pip, digits);
 
-   int ticket = OrderSend(symbol, cmd, volume, openPrice, 3, sl, tp, "MT Bubble", InpMagicNumber, 0, (cmd == OP_BUY) ? clrGreen : clrRed);
+   int ticket = OrderSend(symbol, cmd, volume, openPrice, InpSlippage, sl, tp, "MT Bubble", InpMagicNumber, 0, (cmd == OP_BUY) ? clrGreen : clrRed);
    if(ticket > 0)
       Print("[+] MT4 Order placed successfully. Ticket: ", ticket);
    else
@@ -112,16 +239,24 @@ void ExecuteOpenOrderMT4(string symbol, string typeStr, double volume, double pr
 }
 
 //+------------------------------------------------------------------+
-//| Modify SL/TP in MT4                                              |
+//| Handle MODIFY_SL_TP command in MT4                               |
 //+------------------------------------------------------------------+
-void ExecuteModifySlTpMT4(int ticket, double slDelta, double tpDelta)
+void ExecuteModifySlTp(string json)
 {
-   if(!OrderSelect(ticket, SELECT_BY_TICKET)) return;
+   int ticket       = (int)ExtractJsonDouble(json, "ticket");
+   double slDelta   = ExtractJsonDouble(json, "sl_pips_delta");
+   double tpDelta   = ExtractJsonDouble(json, "tp_pips_delta");
 
-   string symbol = OrderSymbol();
-   int digits = (int)MarketInfo(symbol, MODE_DIGITS);
-   double pip = GetPipValue(symbol);
-   int type = OrderType();
+   if(!OrderSelect(ticket, SELECT_BY_TICKET))
+   {
+      Print("[-] Position not found for ticket: ", ticket);
+      return;
+   }
+
+   string symbol    = OrderSymbol();
+   int digits       = (int)MarketInfo(symbol, MODE_DIGITS);
+   double pip       = GetPipValue(symbol);
+   int type         = OrderType();
    double currentSl = OrderStopLoss();
    double currentTp = OrderTakeProfit();
    double openPrice = OrderOpenPrice();
@@ -150,15 +285,51 @@ void ExecuteModifySlTpMT4(int ticket, double slDelta, double tpDelta)
 }
 
 //+------------------------------------------------------------------+
-//| Close Position in MT4                                            |
+//| Handle CLOSE_POSITION command in MT4                             |
 //+------------------------------------------------------------------+
-void ExecuteClosePositionMT4(int ticket)
+void ExecuteClosePosition(string json)
 {
+   int ticket = (int)ExtractJsonDouble(json, "ticket");
+   if(ticket <= 0) return;
+
    if(!OrderSelect(ticket, SELECT_BY_TICKET)) return;
 
    double closePrice = (OrderType() == OP_BUY) ? MarketInfo(OrderSymbol(), MODE_BID) : MarketInfo(OrderSymbol(), MODE_ASK);
-   if(OrderClose(ticket, OrderLots(), closePrice, 3, clrWhite))
+   if(OrderClose(ticket, OrderLots(), closePrice, InpSlippage, clrWhite))
       Print("[+] MT4 Position closed ticket #", ticket);
    else
       Print("[-] MT4 OrderClose failed. Error: ", GetLastError());
 }
+
+//+------------------------------------------------------------------+
+//| Fast JSON value extraction utilities                             |
+//+------------------------------------------------------------------+
+string ExtractJsonString(string json, string key)
+{
+   string pattern = "\"" + key + "\":\"";
+   int pos = StringFind(json, pattern);
+   if(pos < 0) return "";
+   pos += StringLen(pattern);
+   int end = StringFind(json, "\"", pos);
+   if(end < 0) return "";
+   return StringSubstr(json, pos, end - pos);
+}
+
+double ExtractJsonDouble(string json, string key)
+{
+   string pattern = "\"" + key + "\":";
+   int pos = StringFind(json, pattern);
+   if(pos < 0) return 0.0;
+   pos += StringLen(pattern);
+   while(pos < StringLen(json) && (StringGetCharacter(json, pos) == ' ' || StringGetCharacter(json, pos) == '\"')) pos++;
+   int end = pos;
+   while(end < StringLen(json))
+   {
+      ushort ch = StringGetCharacter(json, end);
+      if((ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == '+') end++;
+      else break;
+   }
+   if(end <= pos) return 0.0;
+   return StringToDouble(StringSubstr(json, pos, end - pos));
+}
+//+------------------------------------------------------------------+

@@ -1,31 +1,30 @@
 //+------------------------------------------------------------------+
 //|                                     MetaTrader_Bridge_EA.mq5    |
 //|                    Copyright 2026, MetaTrader Floating Bubble    |
-//|                        Native WebSocket Server for Android UI    |
+//|                   Production-Ready MQL5 Bridge for Android App   |
 //+------------------------------------------------------------------+
 #property copyright "MetaTrader Floating Bubble"
 #property link      "https://github.com"
-#property version   "1.00"
-#property strict
+#property version   "2.00"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
 #include <Trade\SymbolInfo.mqh>
 
-input int      InpServerPort     = 8080;      // WebSocket Server Port
-input int      InpTimerSeconds   = 1;         // Push Interval (Seconds)
-input ulong    InpMagicNumber    = 101010;    // Magic Number
+//--- Input parameters
+input string   InpServerHost     = "192.168.1.100"; // Android Phone or Bridge IP
+input int      InpServerPort     = 8080;            // Server Port
+input int      InpTimerSeconds   = 1;               // Sync Interval (Seconds)
+input ulong    InpMagicNumber    = 101010;          // Magic Number
+input int      InpSlippage       = 20;              // Slippage Points
+input bool     InpUseWebRequest  = true;            // True = WebRequest (Recommended), False = Socket
 
 CTrade         trade;
 CPositionInfo  posInfo;
 CSymbolInfo    symInfo;
 
-int            g_server_socket   = INVALID_HANDLE;
-int            g_client_socket   = INVALID_HANDLE;
-bool           g_is_websocket    = false;
 datetime       g_last_push_time  = 0;
-
-#define WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+int            g_client_socket   = -1; // -1 represents invalid socket handle
 
 //+------------------------------------------------------------------+
 //| Helper: Calculate Exact Pip Value based on Digits                |
@@ -42,32 +41,30 @@ double GetPipValue(string sym)
 }
 
 //+------------------------------------------------------------------+
+//| Set Safe Order Filling Type                                      |
+//+------------------------------------------------------------------+
+void SetSafeFillingType()
+{
+   uint filling = (uint)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   if((filling & SYMBOL_FILLING_FOK) != 0)
+      trade.SetTypeFilling(ORDER_FILLING_FOK);
+   else if((filling & SYMBOL_FILLING_IOC) != 0)
+      trade.SetTypeFilling(ORDER_FILLING_IOC);
+   else
+      trade.SetTypeFilling(ORDER_FILLING_RETURN);
+}
+
+//+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
 {
    trade.SetExpertMagicNumber(InpMagicNumber);
-   trade.SetDeviationInPoints(20);
-   trade.SetTypeFilling(ORDER_FILLING_FOK);
-
-   // Create and bind TCP socket on port
-   g_server_socket = SocketCreate();
-   if(g_server_socket == INVALID_HANDLE)
-   {
-      Print("[-] Failed to create server socket. Error: ", GetLastError());
-      return INIT_FAILED;
-   }
-
-   if(!SocketListen(g_server_socket, "0.0.0.0", InpServerPort))
-   {
-      Print("[-] SocketListen failed on port ", InpServerPort, ". Error: ", GetLastError());
-      SocketClose(g_server_socket);
-      g_server_socket = INVALID_HANDLE;
-      return INIT_FAILED;
-   }
+   trade.SetDeviationInPoints(InpSlippage);
+   SetSafeFillingType();
 
    EventSetTimer(InpTimerSeconds);
-   Print("[+] MetaTrader Bridge EA initialized. Listening on port ", InpServerPort);
+   Print("[+] MetaTrader 5 Bridge EA initialized. Target: ", InpServerHost, ":", InpServerPort);
    return INIT_SUCCEEDED;
 }
 
@@ -77,17 +74,12 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    EventKillTimer();
-   if(g_client_socket != INVALID_HANDLE)
+   if(g_client_socket >= 0)
    {
       SocketClose(g_client_socket);
-      g_client_socket = INVALID_HANDLE;
+      g_client_socket = -1;
    }
-   if(g_server_socket != INVALID_HANDLE)
-   {
-      SocketClose(g_server_socket);
-      g_server_socket = INVALID_HANDLE;
-   }
-   Print("[*] MetaTrader Bridge EA deinitialized.");
+   Print("[*] MetaTrader 5 Bridge EA deinitialized.");
 }
 
 //+------------------------------------------------------------------+
@@ -95,9 +87,7 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTimer()
 {
-   AcceptClient();
-   ReadClientData();
-   PushPositionsUpdate();
+   SyncWithAndroid();
 }
 
 //+------------------------------------------------------------------+
@@ -105,243 +95,18 @@ void OnTimer()
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   AcceptClient();
-   ReadClientData();
-   if(TimeCurrent() - g_last_push_time >= 1)
+   if(TimeCurrent() - g_last_push_time >= InpTimerSeconds)
    {
-      PushPositionsUpdate();
+      SyncWithAndroid();
    }
 }
 
 //+------------------------------------------------------------------+
-//| Accept incoming connection if none is active                     |
+//| Build JSON array of all open positions                           |
 //+------------------------------------------------------------------+
-void AcceptClient()
+string BuildPositionsJson()
 {
-   if(g_server_socket == INVALID_HANDLE) return;
-
-   if(g_client_socket == INVALID_HANDLE)
-   {
-      g_client_socket = SocketAccept(g_server_socket, 1);
-      if(g_client_socket != INVALID_HANDLE)
-      {
-         Print("[+] Android Client connected to socket: ", g_client_socket);
-         g_is_websocket = false;
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Read incoming client data and process WebSocket frames           |
-//+------------------------------------------------------------------+
-void ReadClientData()
-{
-   if(g_client_socket == INVALID_HANDLE) return;
-
-   uint readable = SocketIsReadable(g_client_socket);
-   if(readable == 0) return;
-
-   uchar buffer[];
-   ArrayResize(buffer, (int)readable);
-   int received = SocketRead(g_client_socket, buffer, (int)readable, 10);
-   if(received <= 0)
-   {
-      int err = GetLastError();
-      if(err != 0)
-      {
-         Print("[-] SocketRead closed or error: ", err);
-         SocketClose(g_client_socket);
-         g_client_socket = INVALID_HANDLE;
-         g_is_websocket = false;
-      }
-      return;
-   }
-
-   string rawStr = CharArrayToString(buffer, 0, received);
-
-   // Check if this is an HTTP WebSocket Upgrade Request
-   if(!g_is_websocket && StringFind(rawStr, "Sec-WebSocket-Key:") >= 0)
-   {
-      PerformWebSocketHandshake(rawStr);
-      return;
-   }
-
-   // If already upgraded to WebSocket, decode frame
-   if(g_is_websocket)
-   {
-      string payload = DecodeWebSocketFrame(buffer, received);
-      if(StringLen(payload) > 0)
-      {
-         ProcessJsonCommand(payload);
-      }
-   }
-   else
-   {
-      // Fallback plain JSON over TCP
-      ProcessJsonCommand(rawStr);
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Perform RFC 6455 WebSocket Handshake                             |
-//+------------------------------------------------------------------+
-void PerformWebSocketHandshake(string request)
-{
-   int keyPos = StringFind(request, "Sec-WebSocket-Key:");
-   if(keyPos < 0) return;
-
-   keyPos += 19;
-   while(keyPos < StringLen(request) && StringGetCharacter(request, keyPos) == ' ') keyPos++;
-   int endPos = StringFind(request, "\r\n", keyPos);
-   if(endPos < 0) endPos = StringFind(request, "\n", keyPos);
-   if(endPos < 0) return;
-
-   string clientKey = StringSubstr(request, keyPos, endPos - keyPos);
-   string acceptSrc = clientKey + WS_GUID;
-
-   uchar keyData[];
-   StringToCharArray(acceptSrc, keyData, 0, StringLen(acceptSrc), CP_ACP);
-
-   uchar sha1Hash[];
-   uchar dummyKey[];
-   CryptEncode(CRYPT_HASH_SHA1, keyData, dummyKey, sha1Hash);
-
-   uchar b64Hash[];
-   CryptEncode(CRYPT_BASE64, sha1Hash, dummyKey, b64Hash);
-   string acceptKey = CharArrayToString(b64Hash);
-
-   string response = "HTTP/1.1 101 Switching Protocols\r\n" +
-                     "Upgrade: websocket\r\n" +
-                     "Connection: Upgrade\r\n" +
-                     "Sec-WebSocket-Accept: " + acceptKey + "\r\n\r\n";
-
-   uchar respBytes[];
-   StringToCharArray(response, respBytes, 0, StringLen(response), CP_ACP);
-   SocketSend(g_client_socket, respBytes, ArraySize(respBytes));
-
-   g_is_websocket = true;
-   Print("[+] WebSocket handshake completed successfully with Android Client.");
-   PushPositionsUpdate();
-}
-
-//+------------------------------------------------------------------+
-//| Decode masked WebSocket frame from Android client                |
-//+------------------------------------------------------------------+
-string DecodeWebSocketFrame(uchar &data[], int length)
-{
-   if(length < 2) return "";
-   uchar b1 = data[0];
-   uchar b2 = data[1];
-
-   int opcode = b1 & 0x0F;
-   if(opcode == 0x08) // Close frame
-   {
-      SocketClose(g_client_socket);
-      g_client_socket = INVALID_HANDLE;
-      g_is_websocket = false;
-      return "";
-   }
-
-   bool masked = (b2 & 0x80) != 0;
-   ulong payloadLen = b2 & 0x7F;
-   int offset = 2;
-
-   if(payloadLen == 126)
-   {
-      if(length < 4) return "";
-      payloadLen = (data[2] << 8) | data[3];
-      offset = 4;
-   }
-   else if(payloadLen == 127)
-   {
-      if(length < 10) return "";
-      offset = 10;
-   }
-
-   uchar maskKey[4];
-   if(masked)
-   {
-      if(length < offset + 4) return "";
-      for(int i = 0; i < 4; i++) maskKey[i] = data[offset + i];
-      offset += 4;
-   }
-
-   if(length < offset + (int)payloadLen) return "";
-
-   uchar unmasked[];
-   ArrayResize(unmasked, (int)payloadLen);
-   for(ulong i = 0; i < payloadLen; i++)
-   {
-      if(masked)
-         unmasked[i] = data[offset + (int)i] ^ maskKey[i % 4];
-      else
-         unmasked[i] = data[offset + (int)i];
-   }
-
-   return CharArrayToString(unmasked, 0, (int)payloadLen, CP_UTF8);
-}
-
-//+------------------------------------------------------------------+
-//| Send WebSocket Text Frame to connected Android Client            |
-//+------------------------------------------------------------------+
-void SendWebSocketText(string text)
-{
-   if(g_client_socket == INVALID_HANDLE) return;
-
-   uchar payload[];
-   StringToCharArray(text, payload, 0, StringLen(text), CP_UTF8);
-   int len = ArraySize(payload);
-
-   uchar frame[];
-   int headerSize = 2;
-   if(len <= 125)
-   {
-      ArrayResize(frame, 2 + len);
-      frame[0] = 0x81; // FIN + text opcode
-      frame[1] = (uchar)len;
-      headerSize = 2;
-   }
-   else if(len <= 65535)
-   {
-      ArrayResize(frame, 4 + len);
-      frame[0] = 0x81;
-      frame[1] = 126;
-      frame[2] = (uchar)((len >> 8) & 0xFF);
-      frame[3] = (uchar)(len & 0xFF);
-      headerSize = 4;
-   }
-   else
-   {
-      ArrayResize(frame, 10 + len);
-      frame[0] = 0x81;
-      frame[1] = 127;
-      for(int i = 0; i < 8; i++) frame[2 + i] = 0;
-      frame[8] = (uchar)((len >> 8) & 0xFF);
-      frame[9] = (uchar)(len & 0xFF);
-      headerSize = 10;
-   }
-
-   ArrayCopy(frame, payload, headerSize, 0, len);
-
-   int sent = SocketSend(g_client_socket, frame, ArraySize(frame));
-   if(sent <= 0)
-   {
-      SocketClose(g_client_socket);
-      g_client_socket = INVALID_HANDLE;
-      g_is_websocket = false;
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Push all open positions to Android in JSON format                |
-//+------------------------------------------------------------------+
-void PushPositionsUpdate()
-{
-   if(g_client_socket == INVALID_HANDLE || !g_is_websocket) return;
-
-   g_last_push_time = TimeCurrent();
    int total = PositionsTotal();
-
    string json = "{\"action\":\"POSITIONS_UPDATE\",\"data\":[";
    bool first = true;
 
@@ -372,38 +137,127 @@ void PushPositionsUpdate()
    }
 
    json += "]}";
-
-   SendWebSocketText(json);
+   return json;
 }
 
 //+------------------------------------------------------------------+
-//| Process incoming JSON command from Android                       |
+//| Sync positions with Android and execute received commands        |
 //+------------------------------------------------------------------+
-void ProcessJsonCommand(string json)
+void SyncWithAndroid()
 {
-   Print("[*] Received JSON: ", json);
+   g_last_push_time = TimeCurrent();
+   string jsonPayload = BuildPositionsJson();
 
-   string action = ExtractJsonString(json, "action");
-
-   if(action == "OPEN_ORDER")
+   if(InpUseWebRequest)
    {
-      ExecuteOpenOrder(json);
-   }
-   else if(action == "MODIFY_SL_TP")
-   {
-      ExecuteModifySlTp(json);
-   }
-   else if(action == "CLOSE_POSITION")
-   {
-      ExecuteClosePosition(json);
+      SyncViaWebRequest(jsonPayload);
    }
    else
    {
-      Print("[!] Unknown action: ", action);
+      SyncViaSocket(jsonPayload);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Sync via native WebRequest (HTTP POST)                           |
+//+------------------------------------------------------------------+
+void SyncViaWebRequest(string jsonPayload)
+{
+   string url = "http://" + InpServerHost + ":" + IntegerToString(InpServerPort) + "/api/positions";
+   string headers = "Content-Type: application/json\r\nAccept: application/json\r\n";
+   
+   char postData[];
+   StringToCharArray(jsonPayload, postData, 0, StringLen(jsonPayload), CP_UTF8);
+   
+   char result[];
+   string resultHeaders;
+   
+   ResetLastError();
+   int res = WebRequest("POST", url, headers, 1000, postData, result, resultHeaders);
+   
+   if(res == 200)
+   {
+      string responseStr = CharArrayToString(result, 0, ArraySize(result), CP_UTF8);
+      if(StringLen(responseStr) > 0)
+      {
+         ProcessJsonCommands(responseStr);
+      }
+   }
+   else if(res == -1)
+   {
+      int err = GetLastError();
+      if(err == 4060) // ERR_FUNCTION_NOT_ALLOWED
+      {
+         Print("[-] WebRequest Error 4060: Please add URL in Tools -> Options -> Expert Advisors -> Allow WebRequest");
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Sync via native MQL5 Client Socket                               |
+//+------------------------------------------------------------------+
+void SyncViaSocket(string jsonPayload)
+{
+   if(g_client_socket < 0 || !SocketIsConnected(g_client_socket))
+   {
+      if(g_client_socket >= 0) SocketClose(g_client_socket);
+      g_client_socket = SocketCreate();
+      if(g_client_socket < 0) return;
+      
+      if(!SocketConnect(g_client_socket, InpServerHost, InpServerPort, 1000))
+      {
+         SocketClose(g_client_socket);
+         g_client_socket = -1;
+         return;
+      }
    }
 
-   // Push immediate update after order execution
-   PushPositionsUpdate();
+   string request = "POST /api/positions HTTP/1.1\r\n" +
+                    "Host: " + InpServerHost + ":" + IntegerToString(InpServerPort) + "\r\n" +
+                    "Content-Type: application/json\r\n" +
+                    "Content-Length: " + IntegerToString(StringLen(jsonPayload)) + "\r\n\r\n" +
+                    jsonPayload;
+
+   uchar sendData[];
+   StringToCharArray(request, sendData, 0, StringLen(request), CP_UTF8);
+   SocketSend(g_client_socket, sendData, ArraySize(sendData));
+
+   uint readable = SocketIsReadable(g_client_socket);
+   if(readable > 0)
+   {
+      uchar buffer[];
+      ArrayResize(buffer, (int)readable);
+      int received = SocketRead(g_client_socket, buffer, readable, 500);
+      if(received > 0)
+      {
+         string resp = CharArrayToString(buffer, 0, received, CP_UTF8);
+         int bodyPos = StringFind(resp, "\r\n\r\n");
+         if(bodyPos >= 0)
+         {
+            string body = StringSubstr(resp, bodyPos + 4);
+            ProcessJsonCommands(body);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Process received JSON commands from Android                      |
+//+------------------------------------------------------------------+
+void ProcessJsonCommands(string json)
+{
+   if(StringFind(json, "OPEN_ORDER") >= 0)
+   {
+      ExecuteOpenOrder(json);
+   }
+   if(StringFind(json, "MODIFY_SL_TP") >= 0)
+   {
+      ExecuteModifySlTp(json);
+   }
+   if(StringFind(json, "CLOSE_POSITION") >= 0)
+   {
+      ExecuteClosePosition(json);
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -430,6 +284,8 @@ void ExecuteOpenOrder(string json)
    double ask = symInfo.Ask();
    double bid = symInfo.Bid();
 
+   SetSafeFillingType();
+
    if(typeStr == "BUY")
    {
       double sl = (slPips > 0) ? NormalizeDouble(ask - slPips * pip, digits) : 0;
@@ -452,7 +308,7 @@ void ExecuteOpenOrder(string json)
    else if(typeStr == "SELL_LIMIT")
    {
       if(price <= 0) price = bid + 20 * pip;
-      double sl = (slPips > 0) ? NormalizeDouble(price + slPips * pip, digits) : 0;
+      double sl = (slPips > 0) ? NormalizeDouble(price - slPips * pip, digits) : 0;
       double tp = (tpPips > 0) ? NormalizeDouble(price - tpPips * pip, digits) : 0;
       trade.SellLimit(volume, price, symbol, sl, tp, ORDER_TIME_GTC, 0, "MT Bubble SellLimit");
    }
@@ -466,7 +322,7 @@ void ExecuteOpenOrder(string json)
    else if(typeStr == "SELL_STOP")
    {
       if(price <= 0) price = bid - 20 * pip;
-      double sl = (slPips > 0) ? NormalizeDouble(price + slPips * pip, digits) : 0;
+      double sl = (slPips > 0) ? NormalizeDouble(price - slPips * pip, digits) : 0;
       double tp = (tpPips > 0) ? NormalizeDouble(price - tpPips * pip, digits) : 0;
       trade.SellStop(volume, price, symbol, sl, tp, ORDER_TIME_GTC, 0, "MT Bubble SellStop");
    }
@@ -536,7 +392,7 @@ void ExecuteClosePosition(string json)
 }
 
 //+------------------------------------------------------------------+
-//| Quick JSON extraction utilities                                  |
+//| Fast JSON value extraction utilities                             |
 //+------------------------------------------------------------------+
 string ExtractJsonString(string json, string key)
 {
