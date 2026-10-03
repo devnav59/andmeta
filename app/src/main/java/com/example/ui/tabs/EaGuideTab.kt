@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Security
@@ -29,8 +28,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
@@ -65,20 +64,24 @@ fun EaGuideTab(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var selectedCodeTab by remember { mutableIntStateOf(0) } // 0 = MQL5, 1 = MQL4, 2 = Python Bridge
+    var selectedCodeTab by remember { mutableIntStateOf(0) } // 0 = PowerShell, 1 = MQL5, 2 = MQL4, 3 = Python, 4 = Bat
     var copiedCode by remember { mutableStateOf(false) }
-    var copiedPowerShell by remember { mutableStateOf(false) }
+    var copiedFirewall by remember { mutableStateOf(false) }
 
     val currentCode = when (selectedCodeTab) {
-        0 -> MqlCodeProvider.mql5Code
-        1 -> MqlCodeProvider.mql4Code
-        else -> MqlCodeProvider.pythonBridgeCode
+        0 -> MqlCodeProvider.powerShellBridgeCode
+        1 -> MqlCodeProvider.mql5Code
+        2 -> MqlCodeProvider.mql4Code
+        3 -> MqlCodeProvider.pythonBridgeCode
+        else -> MqlCodeProvider.batchScriptCode
     }
 
     val currentFileName = when (selectedCodeTab) {
-        0 -> "MetaTrader_Bridge_EA.mq5"
-        1 -> "MetaTrader_Bridge_EA.mq4"
-        else -> "bridge.py"
+        0 -> "bridge.ps1 (بدون نیاز به پایتون)"
+        1 -> "MetaTrader_Bridge_EA.mq5"
+        2 -> "MetaTrader_Bridge_EA.mq4"
+        3 -> "bridge.py (پایتون)"
+        else -> "start_bridge.bat"
     }
 
     LazyColumn(
@@ -87,7 +90,7 @@ fun EaGuideTab(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // VPS Firewall Quick Command Card
+        // Universal Firewall Command Card (Works in CMD and PowerShell)
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SlateCardElevated),
@@ -116,7 +119,7 @@ fun EaGuideTab(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "باز کردن پورت ۸۰۸۰ در فایروال VPS (مرحله ۱)",
+                                text = "دستور باز کردن پورت ۸۰۸۰ در فایروال VPS",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = TextPrimary
@@ -126,25 +129,25 @@ fun EaGuideTab(
                         Button(
                             onClick = {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("PowerShell Command", MqlCodeProvider.powerShellCommand)
+                                val clip = ClipData.newPlainText("Netsh Firewall Command", MqlCodeProvider.universalFirewallCommand)
                                 clipboard.setPrimaryClip(clip)
-                                copiedPowerShell = true
+                                copiedFirewall = true
                             },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (copiedPowerShell) BuyGreen else GoldAccent
+                                containerColor = if (copiedFirewall) BuyGreen else GoldAccent
                             ),
                             shape = RoundedCornerShape(6.dp),
                             modifier = Modifier.height(28.dp)
                         ) {
                             Icon(
-                                if (copiedPowerShell) Icons.Default.Check else Icons.Default.ContentCopy,
+                                if (copiedFirewall) Icons.Default.Check else Icons.Default.ContentCopy,
                                 contentDescription = null,
                                 tint = Color.Black,
                                 modifier = Modifier.size(12.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (copiedPowerShell) "کپی شد!" else "کپی دستور PowerShell",
+                                text = if (copiedFirewall) "کپی شد!" else "کپی دستور ترمینال",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.Black
@@ -153,7 +156,7 @@ fun EaGuideTab(
                     }
 
                     Text(
-                        text = "دستور زیر را در PowerShell سرور مجازی (Run as Administrator) اجرا کنید تا پورت ۸۰۸۰ برای اتصال موبایل باز شود:",
+                        text = "در سرور مجازی، Command Prompt یا PowerShell را باز کرده (Run as Administrator) و این دستور را Paste و Enter کنید (بدون ارور کار می‌کند):",
                         fontSize = 11.sp,
                         color = TextSecondary
                     )
@@ -166,7 +169,7 @@ fun EaGuideTab(
                             .padding(8.dp)
                     ) {
                         Text(
-                            text = MqlCodeProvider.powerShellCommand,
+                            text = MqlCodeProvider.universalFirewallCommand,
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
                             color = BuyGreen
@@ -198,7 +201,7 @@ fun EaGuideTab(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "راهنمای جامع ۴ مرحله‌ای راه‌اندازی متاتریدر روی سرور مجازی",
+                            text = "راهنمای اتصال متاتریدر سرور مجازی به موبایل",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimary
@@ -228,11 +231,12 @@ fun EaGuideTab(
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Version Tab Selector
-                    TabRow(
+                    // Scrollable Tab Selector for files
+                    ScrollableTabRow(
                         selectedTabIndex = selectedCodeTab,
                         containerColor = SlateCardElevated,
                         contentColor = BuyGreen,
+                        edgePadding = 0.dp,
                         indicator = { tabPositions ->
                             TabRowDefaults.SecondaryIndicator(
                                 Modifier.tabIndicatorOffset(tabPositions[selectedCodeTab]),
@@ -244,17 +248,27 @@ fun EaGuideTab(
                         Tab(
                             selected = selectedCodeTab == 0,
                             onClick = { selectedCodeTab = 0; copiedCode = false },
-                            text = { Text("MT5 (MQL5)", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                            text = { Text("PowerShell (بدون پایتون)", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                         )
                         Tab(
                             selected = selectedCodeTab == 1,
                             onClick = { selectedCodeTab = 1; copiedCode = false },
-                            text = { Text("MT4 (MQL4)", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                            text = { Text("MT5 (MQL5)", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                         )
                         Tab(
                             selected = selectedCodeTab == 2,
                             onClick = { selectedCodeTab = 2; copiedCode = false },
-                            text = { Text("Bridge Server (Python)", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                            text = { Text("MT4 (MQL4)", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                        )
+                        Tab(
+                            selected = selectedCodeTab == 3,
+                            onClick = { selectedCodeTab = 3; copiedCode = false },
+                            text = { Text("bridge.py", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                        )
+                        Tab(
+                            selected = selectedCodeTab == 4,
+                            onClick = { selectedCodeTab = 4; copiedCode = false },
+                            text = { Text("start_bridge.bat", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                         )
                     }
 

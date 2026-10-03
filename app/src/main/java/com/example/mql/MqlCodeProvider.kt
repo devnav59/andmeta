@@ -2,40 +2,169 @@ package com.example.mql
 
 object MqlCodeProvider {
 
-    val powerShellCommand: String =
-        "New-NetFirewallRule -DisplayName \"MT_VPS_Bridge_8080\" -Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow"
+    val universalFirewallCommand: String =
+        "netsh advfirewall firewall add rule name=\"MT_Bridge_8080\" dir=in action=allow protocol=TCP localport=8080"
 
     val guideTextFa: String = """
 راهنمای اتصال به متاتریدر روی سرور مجازی (Windows VPS):
 
-معماری کارکرد (چگونه کار می‌کند؟):
-در این روش، متاتریدر (MT4 یا MT5) شما به صورت ۲۴ ساعته روی سرور مجازی ویندوز (VPS) باز است. اسکریپت بریج (Bridge Server) نیز روی همان VPS پورت 8080 را باز می‌کند. شما از هر کجای دنیا با گوشی موبایل خود (حتی با اینترنت همراه 4G/5G یا وای‌فای) مستقیماً به IP سرور مجازی وصل می‌شوید و پوزیشن‌ها را روی صفحه شناور موبایل مدیریت می‌کنید.
+★ ساده‌ترین روش (پیشنهادی): بدون نیاز به نصب پایتون (با PowerShell داخلی ویندوز)
+روی سرور مجازی ویندوز، هیچ نیازی به نصب پایتون ندارید! ویندوز به صورت پیش‌فرض PowerShell دارد.
 
-مراحل ۴ گانه راه‌اندازی روی VPS:
+۱. باز کردن پورت فایروال:
+   روی VPS، پنجره Command Prompt یا PowerShell را با Run as Administrator باز کنید و این دستور را وارد و اینتر کنید:
+   netsh advfirewall firewall add rule name="MT_Bridge_8080" dir=in action=allow protocol=TCP localport=8080
 
-مرحله ۱: باز کردن پورت 8080 در فایروال سرور مجازی
-روی سرور مجازی، منوی استارت را باز کنید، عبارت PowerShell را جستجو کرده و روی آن راست‌کلیک و گزینه Run as Administrator را بزنید. دستور زیر را Paste کرده و Enter بزنید:
-New-NetFirewallRule -DisplayName "MT_VPS_Bridge_8080" -Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow
+۲. اجرای سرور بریج (بدون نیاز به پایتون):
+   - روی دسکتاپ VPS یک فایل متنی به نام bridge.ps1 بسازید.
+   - کدهای تب "PowerShell (بدون پایتون)" را داخل آن کپی و ذخیره کنید.
+   - روی فایل راست‌کلیک کرده و گزینه "Run with PowerShell" را انتخاب کنید.
+   - پنجره آبی‌رنگ باز شده و پیام سبز رنگ "Server is RUNNING on Port 8080" نمایان می‌شود!
 
-مرحله ۲: اجرای سرور بریج روی سرور مجازی (Bridge Server)
-۱. پایتون نسخه ۳ را از وب‌سایت رسمی python.org روی VPS دانلود و نصب کنید (تیک گزینه Add Python to PATH را هنگام نصب بزنید).
-۲. فایل bridge.py (که کدهای آن در تب سرور پایتون قرار دارد) یا فایل start_bridge.bat را در پوشه‌ای روی VPS قرار دهید.
-۳. فایل start_bridge.bat را اجرا کنید (یا در خط فرمان بنویسید: python bridge.py 8080).
-۴. پیام "MetaTrader VPS Bridge Server running on 0.0.0.0:8080" ظاهر می‌شود.
+۳. اجرای اکسپرت در متاتریدر روی VPS:
+   - اکسپرت MetaTrader_Bridge_EA را در متاتریدر با F7 کامپایل کنید و روی یک چارت بیندازید.
+   - در متاتریدر کلیدهای Ctrl + O را بزنید و در تب Expert Advisors تیک Allow Algo Trading و تیک Allow WebRequest را زده و آدرس http://127.0.0.1:8080 را اضافه کنید.
 
-مرحله ۳: نصب و فعال‌سازی اکسپرت در متاتریدر روی VPS
-۱. کد اکسپرت (MQL5 یا MQL4) را از تب‌های زیر کپی کنید.
-۲. در متاتریدر روی VPS: منوی File -> Open Data Folder -> MQL5 (یا MQL4) -> Experts را باز کرده و فایل MetaTrader_Bridge_EA را ذخیره و با F7 کامپایل کنید.
-۳. در متاتریدر کلیدهای Ctrl + O را بزنید و در تب Expert Advisors:
-   - تیک "Allow Algo Trading" را فعال کنید.
-   - تیک "Allow WebRequest for listed URL" را فعال کرده و آدرس http://127.0.0.1:8080 را اضافه کنید.
-۴. اکسپرت را روی یکی از نمودارها (مانند EURUSD) بیندازید. پارامتر InpServerHost به صورت پیش‌فرض روی 127.0.0.1 و پورت 8080 تنظیم است.
+۴. اتصال در اپلیکیشن موبایل:
+   - در تب اتصال اپلیکیشن، در کادر IP، آدرس IP عمومی سرور مجازی خود (Public IP) را وارد کنید.
+   - دکمه بزرگ "CONNECT TO VPS" را بزنید؛ وضعیت فوراً سبز (CONNECTED TO VPS LIVE) شده و تمام معاملات روی گوشی شما ظاهر می‌شوند!
 
-مرحله ۴: اتصال در اپلیکیشن موبایل (دکمه شناور)
-۱. در همین اپلیکیشن، در تب اول (اتصال به VPS)، در کادر "VPS Public IP" آدرس IP عمومی سرور مجازی خود (مثلاً 185.120.45.60) را وارد کنید.
-۲. پورت را روی 8080 قرار دهید.
-۳. دکمه بزرگ "CONNECT TO VPS" را لمس کنید؛ وضعیت بلافاصله به رنگ سبز (CONNECTED TO VPS LIVE) درمی‌آید و تمام پوزیشن‌های باز متاتریدر روی موبایل شما بارگذاری می‌شوند!
-۴. دکمه LAUNCH BUBBLE را بزنید تا دایره شناور فعال شود و روی هر اپلیکیشنی در دسترس باشد.
+----------------------------------------------------
+★ اگر مایلید از پایتون استفاده کنید:
+۱. پایتون ۳ را از python.org نصب کنید (تیک Add Python to PATH حتماً باید خورده باشد).
+۲. کدهای تب "start_bridge.bat" و "bridge.py" را در یک پوشه ذخیره و فایل bat را اجرا کنید.
+    """.trimIndent()
+
+    val powerShellBridgeCode: String = """
+# MetaTrader VPS Bridge Server in Pure PowerShell (No Python Needed!)
+VAR_Port = 8080
+VAR_Host.UI.RawUI.WindowTitle = "MetaTrader VPS Bridge Server (PowerShell Native)"
+
+Write-Host "==========================================================" -ForegroundColor Cyan
+Write-Host "   MetaTrader VPS Bridge Server (Pure PowerShell)        " -ForegroundColor Green
+Write-Host "   NO Python Installation Required - 100% Built-in       " -ForegroundColor Yellow
+Write-Host "==========================================================" -ForegroundColor Cyan
+
+# 1. Open Windows Firewall for Port 8080
+try {
+    netsh advfirewall firewall add rule name="MT_Bridge_8080" dir=in action=allow protocol=TCP localport=VAR_Port | Out-Null
+    Write-Host "[+] Port VAR_Port successfully allowed in Firewall." -ForegroundColor Green
+} catch {
+    Write-Host "[!] Note: Run as Administrator to allow Firewall." -ForegroundColor Yellow
+}
+
+# 2. Start HTTP Listener on 0.0.0.0:8080
+VAR_Listener = New-Object System.Net.HttpListener
+VAR_Listener.Prefixes.Add("http://*:VAR_Port/")
+
+try {
+    VAR_Listener.Start()
+    Write-Host "[+] Server is RUNNING on http://*:VAR_Port/" -ForegroundColor Green
+    Write-Host "[*] Android App target: http://<YOUR_VPS_PUBLIC_IP>:VAR_Port" -ForegroundColor Cyan
+    Write-Host "[*] MetaTrader EA target: http://127.0.0.1:VAR_Port/api/positions" -ForegroundColor Cyan
+    Write-Host "==========================================================" -ForegroundColor Cyan
+} catch {
+    Write-Host "[-] Failed to bind port VAR_Port. Error: VAR_Err" -ForegroundColor Red
+    Read-Host "Press Enter to exit"
+    exit
+}
+
+VAR_LatestPositionsJson = '{"action":"POSITIONS_UPDATE","data":[]}'
+VAR_PendingCommands = [System.Collections.ArrayList]::new()
+VAR_Lock = [System.Object]::new()
+
+while (VAR_Listener.IsListening) {
+    try {
+        VAR_Context = VAR_Listener.GetContext()
+        VAR_Request = VAR_Context.Request
+        VAR_Response = VAR_Context.Response
+
+        VAR_Response.Headers.Add("Access-Control-Allow-Origin", "*")
+        VAR_Response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        VAR_Response.Headers.Add("Access-Control-Allow-Headers", "Content-Type")
+
+        if (VAR_Request.HttpMethod -eq "OPTIONS") {
+            VAR_Response.StatusCode = 200
+            VAR_Response.Close()
+            continue
+        }
+
+        VAR_Path = VAR_Request.Url.AbsolutePath
+        VAR_ResponseString = ""
+
+        if (VAR_Request.HttpMethod -eq "GET") {
+            if (VAR_Path -eq "/api/positions" -or VAR_Path -eq "/" -or VAR_Path -eq "/status") {
+                [System.Threading.Monitor]::Enter(VAR_Lock)
+                try { VAR_ResponseString = VAR_LatestPositionsJson } finally { [System.Threading.Monitor]::Exit(VAR_Lock) }
+                VAR_Response.ContentType = "application/json; charset=utf-8"
+                VAR_Response.StatusCode = 200
+            } else {
+                VAR_Response.StatusCode = 404
+                VAR_ResponseString = '{"error":"Not Found"}'
+            }
+        }
+        elseif (VAR_Request.HttpMethod -eq "POST") {
+            VAR_Reader = New-Object System.IO.StreamReader(VAR_Request.InputStream, VAR_Request.ContentEncoding)
+            VAR_Body = VAR_Reader.ReadToEnd()
+            VAR_Reader.Close()
+
+            if (VAR_Path -eq "/api/positions") {
+                [System.Threading.Monitor]::Enter(VAR_Lock)
+                try {
+                    VAR_LatestPositionsJson = VAR_Body
+                    VAR_CmdsJson = if (VAR_PendingCommands.Count -gt 0) {
+                        VAR_arr = VAR_PendingCommands.ToArray()
+                        VAR_PendingCommands.Clear()
+                        "[" + (VAR_arr -join ",") + "]"
+                    } else { "[]" }
+                    VAR_ResponseString = "{\"status\":\"ok\",\"commands\":" + VAR_CmdsJson + "}"
+                } finally { [System.Threading.Monitor]::Exit(VAR_Lock) }
+                VAR_Response.ContentType = "application/json; charset=utf-8"
+                VAR_Response.StatusCode = 200
+            }
+            elseif (VAR_Path -eq "/api/command" -or VAR_Path -eq "/api/order") {
+                [System.Threading.Monitor]::Enter(VAR_Lock)
+                try {
+                    [void]VAR_PendingCommands.Add(VAR_Body)
+                    Write-Host "[+] Command received from Android: VAR_Body" -ForegroundColor Green
+                } finally { [System.Threading.Monitor]::Exit(VAR_Lock) }
+                VAR_ResponseString = '{"status":"queued"}'
+                VAR_Response.ContentType = "application/json; charset=utf-8"
+                VAR_Response.StatusCode = 200
+            }
+        }
+
+        VAR_Buffer = [System.Text.Encoding]::UTF8.GetBytes(VAR_ResponseString)
+        VAR_Response.ContentLength64 = VAR_Buffer.Length
+        VAR_Response.OutputStream.Write(VAR_Buffer, 0, VAR_Buffer.Length)
+        VAR_Response.OutputStream.Close()
+    } catch {}
+}
+    """.trimIndent().replace("VAR_Err", "$" + "_").replace("VAR_", "$")
+
+    val batchScriptCode: String = """
+@echo off
+title MetaTrader VPS Bridge Server
+color 0B
+cls
+echo ==========================================================
+echo        MetaTrader VPS Bridge Server for Android
+echo ==========================================================
+echo.
+netsh advfirewall firewall add rule name="MT_Bridge_8080" dir=in action=allow protocol=TCP localport=8080 >nul 2>&1
+python --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] Python 3 is NOT installed on this VPS!
+    echo Download: https://www.python.org/downloads/
+    echo (Make sure to check "Add Python to PATH")
+    pause
+    exit /b 1
+)
+python bridge.py 8080
+if %errorlevel% neq 0 (
+    echo [!] Server stopped with error code %errorlevel%.
+)
+pause
     """.trimIndent()
 
     val mql5Code: String = """
@@ -186,7 +315,7 @@ void ExecuteOpenOrder(string json)
    }
    else if(typeStr == "SELL")
    {
-      double sl = (slPips > 0) ? NormalizeDouble(bid + slPips * pip, digits) : 0;
+      double sl = (slPips > 0) ? NormalizeDouble(bid - slPips * pip, digits) : 0;
       double tp = (tpPips > 0) ? NormalizeDouble(bid - tpPips * pip, digits) : 0;
       trade.Sell(volume, symbol, bid, sl, tp, "VPS Bubble Sell");
    }
