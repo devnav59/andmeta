@@ -172,17 +172,19 @@ class FloatingBubbleService : Service() {
         }
 
         val dm = resources.displayMetrics
-        val panelWidth = (dm.widthPixels * 0.94).toInt().coerceAtMost(dpToPx(400))
-        val panelHeight = (dm.heightPixels * 0.75).toInt().coerceAtMost(dpToPx(580))
+        val initialWidth = dpToPx(320).coerceAtMost((dm.widthPixels * 0.95).toInt())
+        val initialHeight = dpToPx(380).coerceAtMost((dm.heightPixels * 0.70).toInt())
 
         panelParams = WindowManager.LayoutParams(
-            panelWidth,
-            panelHeight,
+            initialWidth,
+            initialHeight,
             overlayType,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.CENTER
+            gravity = Gravity.TOP or Gravity.START
+            x = ((dm.widthPixels - initialWidth) / 2).coerceAtLeast(dpToPx(10))
+            y = dpToPx(60)
         }
 
         panelView = ComposeView(this).apply {
@@ -197,6 +199,41 @@ class FloatingBubbleService : Service() {
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                             }
                             context.startActivity(launchIntent)
+                        },
+                        onDragDelta = { dx, dy ->
+                            panelParams.x = (panelParams.x + dx.toInt()).coerceIn(0, dm.widthPixels - dpToPx(80))
+                            panelParams.y = (panelParams.y + dy.toInt()).coerceIn(0, dm.heightPixels - dpToPx(80))
+                            if (panelView?.isAttachedToWindow == true) {
+                                windowManager.updateViewLayout(panelView, panelParams)
+                            }
+                        },
+                        onResizeDelta = { dw, dh ->
+                            val newW = (panelParams.width + dw.toInt()).coerceIn(dpToPx(240), dm.widthPixels)
+                            val newH = (panelParams.height + dh.toInt()).coerceIn(dpToPx(260), dm.heightPixels)
+                            panelParams.width = newW
+                            panelParams.height = newH
+                            if (panelView?.isAttachedToWindow == true) {
+                                windowManager.updateViewLayout(panelView, panelParams)
+                            }
+                        },
+                        onToggleSizePreset = { preset ->
+                            when (preset) {
+                                0 -> { // Small / Compact
+                                    panelParams.width = dpToPx(270).coerceAtMost(dm.widthPixels)
+                                    panelParams.height = dpToPx(320).coerceAtMost(dm.heightPixels)
+                                }
+                                1 -> { // Medium / Normal
+                                    panelParams.width = dpToPx(320).coerceAtMost(dm.widthPixels)
+                                    panelParams.height = dpToPx(390).coerceAtMost(dm.heightPixels)
+                                }
+                                2 -> { // Large
+                                    panelParams.width = dpToPx(360).coerceAtMost(dm.widthPixels)
+                                    panelParams.height = dpToPx(480).coerceAtMost(dm.heightPixels)
+                                }
+                            }
+                            if (panelView?.isAttachedToWindow == true) {
+                                windowManager.updateViewLayout(panelView, panelParams)
+                            }
                         }
                     )
                 }

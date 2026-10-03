@@ -4,11 +4,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,11 +17,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
@@ -30,6 +33,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -57,10 +62,8 @@ import com.example.model.ConnectionStatus
 import com.example.model.OrderType
 import com.example.repository.TradingRepository
 import com.example.ui.theme.BuyGreen
-import com.example.ui.theme.BuyGreenContainer
 import com.example.ui.theme.GoldAccent
 import com.example.ui.theme.SellRed
-import com.example.ui.theme.SellRedContainer
 import com.example.ui.theme.SlateBorder
 import com.example.ui.theme.SlateCard
 import com.example.ui.theme.SlateCardElevated
@@ -71,7 +74,6 @@ import com.example.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 import java.util.Locale
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun NewOrderTab(
     modifier: Modifier = Modifier,
@@ -79,396 +81,274 @@ fun NewOrderTab(
 ) {
     val status by TradingRepository.connectionStatus.collectAsState()
 
-    var symbol by remember { mutableStateOf("EURUSD") }
-    var selectedOrderType by remember { mutableStateOf(OrderType.BUY) }
-    var volume by remember { mutableDoubleStateOf(0.10) }
-    var priceText by remember { mutableStateOf("") }
+    var volume by remember { mutableDoubleStateOf(0.01) }
+    var volumeText by remember { mutableStateOf("0.01") }
+
+    var isSlTpEnabled by remember { mutableStateOf(false) }
     var slPipsText by remember { mutableStateOf("20") }
     var tpPipsText by remember { mutableStateOf("40") }
+    var activePipField by remember { mutableStateOf("SL") } // "SL" or "TP"
+
+    var isPendingExpanded by remember { mutableStateOf(false) }
+    var pendingType by remember { mutableStateOf(OrderType.BUY_LIMIT) }
+    var pendingPriceText by remember { mutableStateOf("") }
+
     var lastExecutionMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(lastExecutionMessage) {
         if (lastExecutionMessage != null) {
-            delay(3500)
+            delay(3000)
             lastExecutionMessage = null
         }
     }
 
-    val isBuy = selectedOrderType == OrderType.BUY || selectedOrderType == OrderType.BUY_LIMIT || selectedOrderType == OrderType.BUY_STOP
-    val isPending = selectedOrderType.isPending
+    val microLots = listOf(0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09)
+    val miniLots = listOf(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+    val pipPresets = listOf(10, 20, 30, 40, 50, 60, 70, 80, 90, 100)
 
-    val popularSymbols = listOf("EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSD", "US30")
+    fun executeOrder(type: OrderType, price: Double = 0.0) {
+        val slPips = if (isSlTpEnabled) slPipsText.toDoubleOrNull() ?: 0.0 else 0.0
+        val tpPips = if (isSlTpEnabled) tpPipsText.toDoubleOrNull() ?: 0.0 else 0.0
+        val lot = volumeText.toDoubleOrNull() ?: volume
+
+        TradingRepository.openOrder(
+            symbol = "", // MetaTrader EA uses _Symbol of the active chart!
+            type = type,
+            volume = lot,
+            price = price,
+            slPips = slPips,
+            tpPips = tpPips
+        )
+        lastExecutionMessage = "${type.name} $lot Lot (چارت فعال)"
+    }
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(if (isCompactOverlay) 10.dp else 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(horizontal = if (isCompactOverlay) 6.dp else 10.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Success / feedback banner
-        item {
-            AnimatedVisibility(visible = lastExecutionMessage != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(BuyGreenContainer)
-                        .border(1.dp, BuyGreen, RoundedCornerShape(10.dp))
-                        .padding(10.dp)
+        // Active Chart Notice & Feedback
+        if (lastExecutionMessage != null) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = BuyGreen.copy(alpha = 0.15f)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = BuyGreen,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = BuyGreen, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = lastExecutionMessage ?: "",
-                            fontSize = 12.sp,
-                            color = TextPrimary,
-                            fontWeight = FontWeight.Medium
+                            text = "ثبت شد: ${lastExecutionMessage.orEmpty()}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BuyGreen
                         )
                     }
                 }
             }
         }
 
-        // Symbol Card
+        // 1. Primary BUY & SELL Execution Row with Volume in between
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SlateCard),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // BUY Button
+                    Button(
+                        onClick = { executeOrder(OrderType.BUY) },
+                        colors = ButtonDefaults.buttonColors(containerColor = BuyGreen),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .weight(1.1f)
+                            .height(48.dp)
+                            .testTag("floating_buy_button")
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.TrendingUp, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("BUY", fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color.Black)
+                            }
+                            Text("خرید سریع", fontSize = 9.sp, color = Color.Black.copy(alpha = 0.8f))
+                        }
+                    }
+
+                    // Volume (Lot) Input in the Middle
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(SlateDark)
+                            .border(1.dp, SlateBorder, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("حجم (Lot)", fontSize = 9.sp, color = TextMuted)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val cur = volumeText.toDoubleOrNull() ?: volume
+                                        val next = (cur - 0.01).coerceAtLeast(0.01)
+                                        volume = next
+                                        volumeText = String.format(Locale.US, "%.2f", next)
+                                    },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.Remove, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(14.dp))
+                                }
+
+                                OutlinedTextField(
+                                    value = volumeText,
+                                    onValueChange = {
+                                        volumeText = it
+                                        it.toDoubleOrNull()?.let { v -> volume = v }
+                                    },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                        color = GoldAccent
+                                    ),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = Color.Transparent,
+                                        unfocusedBorderColor = Color.Transparent,
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent
+                                    ),
+                                    modifier = Modifier.width(64.dp)
+                                )
+
+                                IconButton(
+                                    onClick = {
+                                        val cur = volumeText.toDoubleOrNull() ?: volume
+                                        val next = (cur + 0.01)
+                                        volume = next
+                                        volumeText = String.format(Locale.US, "%.2f", next)
+                                    },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(14.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    // SELL Button
+                    Button(
+                        onClick = { executeOrder(OrderType.SELL) },
+                        colors = ButtonDefaults.buttonColors(containerColor = SellRed),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .weight(1.1f)
+                            .height(48.dp)
+                            .testTag("floating_sell_button")
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.TrendingDown, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("SELL", fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color.White)
+                            }
+                            Text("فروش سریع", fontSize = 9.sp, color = Color.White.copy(alpha = 0.8f))
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Quick Lot Selection: Two Rows (0.01 to 0.09 and 0.1 to 0.9)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SlateCard),
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    // Row 1: 0.01 to 0.09
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text(
-                            text = "TRADING ASSET / SYMBOL",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = GoldAccent,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = symbol.uppercase(),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Black,
-                            color = TextPrimary,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        popularSymbols.forEach { sym ->
-                            val isSelected = symbol.equals(sym, ignoreCase = true)
+                        microLots.forEach { lot ->
+                            val isSelected = (volumeText.toDoubleOrNull() ?: volume) == lot
                             Box(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSelected) BuyGreen else SlateCardElevated)
-                                    .border(1.dp, if (isSelected) BuyGreen else SlateBorder, RoundedCornerShape(8.dp))
-                                    .clickable { symbol = sym }
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSelected) BuyGreen else SlateDark)
+                                    .border(1.dp, if (isSelected) BuyGreen else SlateBorder, RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        volume = lot
+                                        volumeText = String.format(Locale.US, "%.2f", lot)
+                                    }
+                                    .padding(horizontal = 7.dp, vertical = 4.dp),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = sym,
-                                    fontSize = 12.sp,
+                                    text = String.format(Locale.US, "%.2f", lot),
+                                    fontSize = 10.sp,
                                     fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium,
-                                    color = if (isSelected) Color.Black else TextPrimary,
+                                    color = if (isSelected) Color.Black else TextSecondary,
                                     fontFamily = FontFamily.Monospace
                                 )
                             }
                         }
                     }
 
-                    OutlinedTextField(
-                        value = symbol,
-                        onValueChange = { symbol = it.uppercase() },
-                        label = { Text("Custom Symbol", fontSize = 11.sp) },
-                        singleLine = true,
+                    // Row 2: 0.1 to 0.9
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("symbol_input"),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = BuyGreen,
-                            unfocusedBorderColor = SlateBorder,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary
-                        )
-                    )
-                }
-            }
-        }
-
-        // Order Type Selector
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = SlateCard),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "ORDER EXECUTION TYPE",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = GoldAccent,
-                        letterSpacing = 1.sp
-                    )
-
-                    // Market Orders: BUY / SELL
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        val isBuySelected = selectedOrderType == OrderType.BUY
-                        val isSellSelected = selectedOrderType == OrderType.SELL
-
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (isBuySelected) BuyGreen else BuyGreenContainer.copy(alpha = 0.5f))
-                                .border(1.dp, BuyGreen, RoundedCornerShape(10.dp))
-                                .clickable { selectedOrderType = OrderType.BUY }
-                                .padding(vertical = 10.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.TrendingUp,
-                                    contentDescription = null,
-                                    tint = if (isBuySelected) Color.Black else BuyGreen,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "BUY (Market)",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = if (isBuySelected) Color.Black else BuyGreen
-                                )
-                            }
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (isSellSelected) SellRed else SellRedContainer.copy(alpha = 0.5f))
-                                .border(1.dp, SellRed, RoundedCornerShape(10.dp))
-                                .clickable { selectedOrderType = OrderType.SELL }
-                                .padding(vertical = 10.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.TrendingDown,
-                                    contentDescription = null,
-                                    tint = if (isSellSelected) Color.White else SellRed,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "SELL (Market)",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = if (isSellSelected) Color.White else SellRed
-                                )
-                            }
-                        }
-                    }
-
-                    // Pending Orders
-                    Text(
-                        text = "Pending Orders:",
-                        fontSize = 10.sp,
-                        color = TextMuted
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf(
-                            OrderType.BUY_LIMIT,
-                            OrderType.SELL_LIMIT,
-                            OrderType.BUY_STOP,
-                            OrderType.SELL_STOP
-                        ).forEach { type ->
-                            val isSelected = selectedOrderType == type
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSelected) GoldAccent else SlateCardElevated)
-                                    .border(1.dp, if (isSelected) GoldAccent else SlateBorder, RoundedCornerShape(8.dp))
-                                    .clickable { selectedOrderType = type }
-                                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = type.displayName,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium,
-                                    color = if (isSelected) Color.Black else TextSecondary
-                                )
-                            }
-                        }
-                    }
-
-                    if (isPending) {
-                        OutlinedTextField(
-                            value = priceText,
-                            onValueChange = { priceText = it },
-                            label = { Text("Pending Entry Price (0.0 for auto)", fontSize = 11.sp) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = GoldAccent,
-                                unfocusedBorderColor = SlateBorder,
-                                focusedTextColor = TextPrimary,
-                                unfocusedTextColor = TextPrimary
-                            )
-                        )
-                    }
-                }
-            }
-        }
-
-        // Volume / Lot Size Card
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = SlateCard),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "ORDER VOLUME (LOTS)",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = GoldAccent,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = String.format(Locale.US, "%.2f Lots", volume),
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Black,
-                            color = BuyGreen,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = { if (volume > 0.01) volume = ((volume - 0.10) * 100).toInt() / 100.0.coerceAtLeast(0.01) },
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SlateCardElevated)
-                                .size(36.dp)
-                        ) {
-                            Text("-0.1", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                        }
-
-                        IconButton(
-                            onClick = { if (volume > 0.01) volume = ((volume - 0.01) * 100).toInt() / 100.0.coerceAtLeast(0.01) },
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SlateCardElevated)
-                                .size(36.dp)
-                        ) {
-                            Text("-0.01", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SlateDark)
-                                .border(1.dp, SlateBorder, RoundedCornerShape(8.dp))
-                                .padding(vertical = 8.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = String.format(Locale.US, "%.2f", volume),
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Black,
-                                color = TextPrimary,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-
-                        IconButton(
-                            onClick = { volume = ((volume + 0.01) * 100).toInt() / 100.0.coerceAtMost(100.0) },
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SlateCardElevated)
-                                .size(36.dp)
-                        ) {
-                            Text("+0.01", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                        }
-
-                        IconButton(
-                            onClick = { volume = ((volume + 0.10) * 100).toInt() / 100.0.coerceAtMost(100.0) },
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SlateCardElevated)
-                                .size(36.dp)
-                        ) {
-                            Text("+0.1", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                        }
-                    }
-
-                    // Lot presets
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf(0.01, 0.05, 0.10, 0.25, 0.50, 1.00).forEach { lot ->
-                            val isSelected = Math.abs(volume - lot) < 0.001
+                        miniLots.forEach { lot ->
+                            val isSelected = (volumeText.toDoubleOrNull() ?: volume) == lot
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSelected) BuyGreen else SlateCardElevated)
-                                    .clickable { volume = lot }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .background(if (isSelected) GoldAccent else SlateDark)
+                                    .border(1.dp, if (isSelected) GoldAccent else SlateBorder, RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        volume = lot
+                                        volumeText = String.format(Locale.US, "%.1f", lot)
+                                    }
+                                    .padding(horizontal = 9.dp, vertical = 4.dp),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = String.format(Locale.US, "%.2f", lot),
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) Color.Black else TextSecondary
+                                    text = String.format(Locale.US, "%.1f", lot),
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium,
+                                    color = if (isSelected) Color.Black else TextSecondary,
+                                    fontFamily = FontFamily.Monospace
                                 )
                             }
                         }
@@ -477,93 +357,287 @@ fun NewOrderTab(
             }
         }
 
-        // SL & TP in Pips Card
+        // 3. SL / TP Checkbox & Inputs with 10 to 100 Pip quick buttons
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SlateCard),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    val slNum = slPipsText.toDoubleOrNull() ?: 0.0
-                    val tpNum = tpPipsText.toDoubleOrNull() ?: 0.0
-                    val rrRatio = if (slNum > 0 && tpNum > 0) String.format(Locale.US, "1:%.1f", tpNum / slNum) else "--"
-
+                    // Checkbox
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isSlTpEnabled = !isSlTpEnabled },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Checkbox(
+                            checked = isSlTpEnabled,
+                            onCheckedChange = { isSlTpEnabled = it },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = GoldAccent,
+                                checkmarkColor = Color.Black
+                            ),
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "RISK MANAGEMENT (PIPS)",
+                            text = "تعیین حد ضرر و سود (SL / TP به پیپ)",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = GoldAccent,
-                            letterSpacing = 1.sp
+                            color = if (isSlTpEnabled) GoldAccent else TextSecondary
                         )
+                        Spacer(modifier = Modifier.weight(1f))
                         Text(
-                            text = "R:R Ratio $rrRatio",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = TextSecondary
+                            text = if (isSlTpEnabled) "فعال" else "بدون استاپ/تیپی",
+                            fontSize = 9.sp,
+                            color = if (isSlTpEnabled) BuyGreen else TextMuted
                         )
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // Stop Loss Field
-                        Column(modifier = Modifier.weight(1f)) {
-                            OutlinedTextField(
-                                value = slPipsText,
-                                onValueChange = { slPipsText = it },
-                                label = { Text("SL (Pips)", fontSize = 11.sp) },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("sl_pips_input"),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = SellRed,
-                                    unfocusedBorderColor = SlateBorder,
-                                    focusedTextColor = TextPrimary,
-                                    unfocusedTextColor = TextPrimary
-                                )
+                    // SL & TP Inputs side by side
+                    AnimatedVisibility(visible = isSlTpEnabled) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                // Stop Loss Field
+                                val isSlActive = activePipField == "SL"
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(SlateDark)
+                                        .border(
+                                            1.5.dp,
+                                            if (isSlActive) SellRed else SlateBorder,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable { activePipField = "SL" }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Column {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text("حد ضرر (SL)", fontSize = 9.sp, color = SellRed, fontWeight = FontWeight.Bold)
+                                            if (isSlActive) {
+                                                Text("انتخاب شده", fontSize = 8.sp, color = SellRed)
+                                            }
+                                        }
+                                        OutlinedTextField(
+                                            value = slPipsText,
+                                            onValueChange = { slPipsText = it },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            textStyle = androidx.compose.ui.text.TextStyle(
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = TextPrimary
+                                            ),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = Color.Transparent,
+                                                unfocusedBorderColor = Color.Transparent
+                                            ),
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                }
+
+                                // Take Profit Field
+                                val isTpActive = activePipField == "TP"
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(SlateDark)
+                                        .border(
+                                            1.5.dp,
+                                            if (isTpActive) BuyGreen else SlateBorder,
+                                            RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable { activePipField = "TP" }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Column {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text("حد سود (TP)", fontSize = 9.sp, color = BuyGreen, fontWeight = FontWeight.Bold)
+                                            if (isTpActive) {
+                                                Text("انتخاب شده", fontSize = 8.sp, color = BuyGreen)
+                                            }
+                                        }
+                                        OutlinedTextField(
+                                            value = tpPipsText,
+                                            onValueChange = { tpPipsText = it },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            textStyle = androidx.compose.ui.text.TextStyle(
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = TextPrimary
+                                            ),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = Color.Transparent,
+                                                unfocusedBorderColor = Color.Transparent
+                                            ),
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                }
+                            }
+
+                            // 10 to 100 Pips Quick Row
+                            Text(
+                                text = "کلیک روی پیپ برای درج در فیلد ${if (activePipField == "SL") "حد ضرر (SL)" else "حد سود (TP)"}:",
+                                fontSize = 9.sp,
+                                color = TextMuted
                             )
 
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                listOf(10, 20, 30, 50).forEach { p ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                pipPresets.forEach { pip ->
+                                    val isCurrentValue = (if (activePipField == "SL") slPipsText else tpPipsText) == pip.toString()
                                     Box(
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(SlateCardElevated)
-                                            .clickable { slPipsText = p.toString() }
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(
+                                                if (isCurrentValue) {
+                                                    if (activePipField == "SL") SellRed else BuyGreen
+                                                } else SlateDark
+                                            )
+                                            .border(1.dp, SlateBorder, RoundedCornerShape(6.dp))
+                                            .clickable {
+                                                if (activePipField == "SL") {
+                                                    slPipsText = pip.toString()
+                                                } else {
+                                                    tpPipsText = pip.toString()
+                                                }
+                                            }
+                                            .padding(horizontal = 7.dp, vertical = 3.dp),
+                                        contentAlignment = Alignment.Center
                                     ) {
-                                        Text("$p", fontSize = 10.sp, color = TextSecondary)
+                                        Text(
+                                            text = "$pip",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isCurrentValue) Color.White else TextPrimary,
+                                            fontFamily = FontFamily.Monospace
+                                        )
                                     }
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
 
-                        // Take Profit Field
-                        Column(modifier = Modifier.weight(1f)) {
+        // 4. Pending Orders Structure
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = SlateCardElevated),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isPendingExpanded = !isPendingExpanded },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "اردرهای شرطی (Pending Orders)",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                        IconButton(
+                            onClick = { isPendingExpanded = !isPendingExpanded },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                if (isPendingExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null,
+                                tint = TextSecondary
+                            )
+                        }
+                    }
+
+                    AnimatedVisibility(visible = isPendingExpanded) {
+                        Column(
+                            modifier = Modifier.padding(top = 6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            // 4 Types selector
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                listOf(
+                                    OrderType.BUY_LIMIT,
+                                    OrderType.SELL_LIMIT,
+                                    OrderType.BUY_STOP,
+                                    OrderType.SELL_STOP
+                                ).forEach { type ->
+                                    val isSelected = pendingType == type
+                                    val isBuyType = type.name.startsWith("BUY")
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(
+                                                if (isSelected) {
+                                                    if (isBuyType) BuyGreen else SellRed
+                                                } else SlateDark
+                                            )
+                                            .border(1.dp, SlateBorder, RoundedCornerShape(6.dp))
+                                            .clickable { pendingType = type }
+                                            .padding(vertical = 5.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = type.name.replace("_", " "),
+                                            fontSize = 8.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) (if (isBuyType) Color.Black else Color.White) else TextSecondary
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Price input
                             OutlinedTextField(
-                                value = tpPipsText,
-                                onValueChange = { tpPipsText = it },
-                                label = { Text("TP (Pips)", fontSize = 11.sp) },
+                                value = pendingPriceText,
+                                onValueChange = { pendingPriceText = it },
+                                label = { Text("قیمت شرطی (اختیاری - پیش‌فرض ۲۰ پیپ فاصله)", fontSize = 10.sp) },
                                 singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("tp_pips_input"),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.fillMaxWidth(),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = BuyGreen,
                                     unfocusedBorderColor = SlateBorder,
@@ -572,75 +646,30 @@ fun NewOrderTab(
                                 )
                             )
 
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                listOf(20, 40, 60, 100).forEach { p ->
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(SlateCardElevated)
-                                            .clickable { tpPipsText = p.toString() }
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                        Text("$p", fontSize = 10.sp, color = TextSecondary)
-                                    }
-                                }
+                            // Submit Pending Button
+                            Button(
+                                onClick = {
+                                    val targetPrice = pendingPriceText.toDoubleOrNull() ?: 0.0
+                                    executeOrder(pendingType, targetPrice)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (pendingType.name.startsWith("BUY")) BuyGreen else SellRed
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(36.dp)
+                            ) {
+                                Text(
+                                    text = "ثبت اردر ${pendingType.name.replace("_", " ")}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (pendingType.name.startsWith("BUY")) Color.Black else Color.White
+                                )
                             }
                         }
                     }
                 }
-            }
-        }
-
-        // Action Execution Button
-        item {
-            val isLive = status == ConnectionStatus.CONNECTED || status == ConnectionStatus.SIMULATED
-            val buttonColor = if (isPending) GoldAccent else if (isBuy) BuyGreen else SellRed
-            val textColor = if (isPending || isBuy) Color.Black else Color.White
-
-            Button(
-                onClick = {
-                    val price = priceText.toDoubleOrNull() ?: 0.0
-                    val sl = slPipsText.toDoubleOrNull() ?: 0.0
-                    val tp = tpPipsText.toDoubleOrNull() ?: 0.0
-
-                    val success = TradingRepository.openOrder(
-                        symbol = symbol,
-                        type = selectedOrderType,
-                        volume = volume,
-                        price = price,
-                        slPips = sl,
-                        tpPips = tp
-                    )
-
-                    lastExecutionMessage = if (success) {
-                        "Sent ${selectedOrderType.name} ${volume} Lots on ${symbol.uppercase()}"
-                    } else {
-                        "Failed to send: please check MetaTrader connection"
-                    }
-                },
-                enabled = isLive,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = buttonColor,
-                    disabledContainerColor = SlateCardElevated
-                ),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-                    .testTag("execute_order_button")
-            ) {
-                Text(
-                    text = if (!isLive) {
-                        "CONNECT TO EXECUTE"
-                    } else {
-                        "EXECUTE ${selectedOrderType.displayName.uppercase()} ${String.format(Locale.US, "%.2f", volume)} $symbol"
-                    },
-                    color = if (!isLive) TextMuted else textColor,
-                    fontWeight = FontWeight.Black,
-                    fontSize = 13.sp,
-                    letterSpacing = 0.5.sp
-                )
             }
         }
     }
