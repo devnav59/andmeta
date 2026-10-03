@@ -1,24 +1,24 @@
 //+------------------------------------------------------------------+
 //|                                     MetaTrader_Bridge_EA.mq5    |
 //|                    Copyright 2026, MetaTrader Floating Bubble    |
-//|         Production-Ready MQL5 Bridge (Optimized for Winlator)    |
+//|               Production-Ready MQL5 Bridge for Windows VPS       |
 //+------------------------------------------------------------------+
 #property copyright "MetaTrader Floating Bubble"
 #property link      "https://github.com"
-#property version   "2.10"
+#property version   "3.00"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
 #include <Trade\SymbolInfo.mqh>
 
 //--- Input parameters
-input string   InpServerHost     = "127.0.0.1";     // Android IP (127.0.0.1 or 10.0.2.2 for Winlator)
-input int      InpServerPort     = 8080;            // Server Port
+input string   InpServerHost     = "127.0.0.1";     // Local Bridge IP on VPS
+input int      InpServerPort     = 8080;            // Bridge Port
 input int      InpTimerSeconds   = 1;               // Sync Interval (Seconds)
 input ulong    InpMagicNumber    = 101010;          // Magic Number
 input int      InpSlippage       = 20;              // Slippage Points
-input bool     InpUseSocket      = true;            // True = Raw Socket (Best for Winlator/Wine)
-input bool     InpUseWebRequest  = false;           // True = WebRequest (Requires Wine Internet)
+input bool     InpUseWebRequest  = true;            // True = WebRequest (Recommended for VPS)
+input bool     InpUseSocket      = false;           // True = Raw Socket
 
 CTrade         trade;
 CPositionInfo  posInfo;
@@ -65,7 +65,7 @@ int OnInit()
    SetSafeFillingType();
 
    EventSetTimer(InpTimerSeconds);
-   Print("[+] MetaTrader 5 Bridge EA initialized. Target: ", InpServerHost, ":", InpServerPort, " Mode: ", (InpUseSocket ? "Raw Socket" : "WebRequest"));
+   Print("[+] MetaTrader 5 VPS Bridge EA initialized. Target: ", InpServerHost, ":", InpServerPort);
    return INIT_SUCCEEDED;
 }
 
@@ -80,7 +80,7 @@ void OnDeinit(const int reason)
       SocketClose(g_client_socket);
       g_client_socket = -1;
    }
-   Print("[*] MetaTrader 5 Bridge EA deinitialized.");
+   Print("[*] MetaTrader 5 VPS Bridge EA deinitialized.");
 }
 
 //+------------------------------------------------------------------+
@@ -88,7 +88,7 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTimer()
 {
-   SyncWithAndroid();
+   SyncWithBridge();
 }
 
 //+------------------------------------------------------------------+
@@ -98,7 +98,7 @@ void OnTick()
 {
    if(TimeCurrent() - g_last_push_time >= InpTimerSeconds)
    {
-      SyncWithAndroid();
+      SyncWithBridge();
    }
 }
 
@@ -142,25 +142,60 @@ string BuildPositionsJson()
 }
 
 //+------------------------------------------------------------------+
-//| Sync positions with Android and execute received commands        |
+//| Sync positions with VPS Bridge and execute received commands     |
 //+------------------------------------------------------------------+
-void SyncWithAndroid()
+void SyncWithBridge()
 {
    g_last_push_time = TimeCurrent();
    string jsonPayload = BuildPositionsJson();
 
-   if(InpUseSocket)
-   {
-      SyncViaSocket(jsonPayload);
-   }
-   else if(InpUseWebRequest)
+   if(InpUseWebRequest)
    {
       SyncViaWebRequest(jsonPayload);
+   }
+   else if(InpUseSocket)
+   {
+      SyncViaSocket(jsonPayload);
    }
 }
 
 //+------------------------------------------------------------------+
-//| Sync via native MQL5 Client Socket (Winlator Preferred)         |
+//| Sync via native WebRequest (HTTP POST on VPS localhost)          |
+//+------------------------------------------------------------------+
+void SyncViaWebRequest(string jsonPayload)
+{
+   string url = "http://" + InpServerHost + ":" + IntegerToString(InpServerPort) + "/api/positions";
+   string headers = "Content-Type: application/json\r\nAccept: application/json\r\n";
+
+   char postData[];
+   StringToCharArray(jsonPayload, postData, 0, StringLen(jsonPayload), CP_UTF8);
+
+   char result[];
+   string resultHeaders;
+
+   ResetLastError();
+   int res = WebRequest("POST", url, headers, 1000, postData, result, resultHeaders);
+
+   if(res == 200)
+   {
+      string responseStr = CharArrayToString(result, 0, ArraySize(result), CP_UTF8);
+      if(StringLen(responseStr) > 0)
+      {
+         ProcessJsonCommands(responseStr);
+      }
+   }
+   else if(res == -1)
+   {
+      int err = GetLastError();
+      if(err == 4060)
+      {
+         Print("[-] WebRequest Error 4060: In MT5 on VPS, go to Tools -> Options -> Expert Advisors -> Allow WebRequest and add http://", InpServerHost, ":", InpServerPort);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Sync via native MQL5 Client Socket                               |
 //+------------------------------------------------------------------+
 void SyncViaSocket(string jsonPayload)
 {
@@ -199,41 +234,6 @@ void SyncViaSocket(string jsonPayload)
       {
          string resp = CharArrayToString(buffer, 0, received, CP_UTF8);
          ProcessJsonCommands(resp);
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Sync via native WebRequest (HTTP POST)                           |
-//+------------------------------------------------------------------+
-void SyncViaWebRequest(string jsonPayload)
-{
-   string url = "http://" + InpServerHost + ":" + IntegerToString(InpServerPort) + "/api/positions";
-   string headers = "Content-Type: application/json\r\nAccept: application/json\r\n";
-
-   char postData[];
-   StringToCharArray(jsonPayload, postData, 0, StringLen(jsonPayload), CP_UTF8);
-
-   char result[];
-   string resultHeaders;
-
-   ResetLastError();
-   int res = WebRequest("POST", url, headers, 1000, postData, result, resultHeaders);
-
-   if(res == 200)
-   {
-      string responseStr = CharArrayToString(result, 0, ArraySize(result), CP_UTF8);
-      if(StringLen(responseStr) > 0)
-      {
-         ProcessJsonCommands(responseStr);
-      }
-   }
-   else if(res == -1)
-   {
-      int err = GetLastError();
-      if(err == 4060)
-      {
-         Print("[-] WebRequest Error 4060: Please add URL in Tools -> Options -> Expert Advisors -> Allow WebRequest");
       }
    }
 }
@@ -287,41 +287,41 @@ void ExecuteOpenOrder(string json)
    {
       double sl = (slPips > 0) ? NormalizeDouble(ask - slPips * pip, digits) : 0;
       double tp = (tpPips > 0) ? NormalizeDouble(ask + tpPips * pip, digits) : 0;
-      trade.Buy(volume, symbol, ask, sl, tp, "MT Bubble Buy");
+      trade.Buy(volume, symbol, ask, sl, tp, "VPS Bubble Buy");
    }
    else if(typeStr == "SELL")
    {
       double sl = (slPips > 0) ? NormalizeDouble(bid + slPips * pip, digits) : 0;
       double tp = (tpPips > 0) ? NormalizeDouble(bid - tpPips * pip, digits) : 0;
-      trade.Sell(volume, symbol, bid, sl, tp, "MT Bubble Sell");
+      trade.Sell(volume, symbol, bid, sl, tp, "VPS Bubble Sell");
    }
    else if(typeStr == "BUY_LIMIT")
    {
       if(price <= 0) price = ask - 20 * pip;
       double sl = (slPips > 0) ? NormalizeDouble(price - slPips * pip, digits) : 0;
       double tp = (tpPips > 0) ? NormalizeDouble(price + tpPips * pip, digits) : 0;
-      trade.BuyLimit(volume, price, symbol, sl, tp, ORDER_TIME_GTC, 0, "MT Bubble BuyLimit");
+      trade.BuyLimit(volume, price, symbol, sl, tp, ORDER_TIME_GTC, 0, "VPS Bubble BuyLimit");
    }
    else if(typeStr == "SELL_LIMIT")
    {
       if(price <= 0) price = bid + 20 * pip;
       double sl = (slPips > 0) ? NormalizeDouble(price - slPips * pip, digits) : 0;
       double tp = (tpPips > 0) ? NormalizeDouble(price - tpPips * pip, digits) : 0;
-      trade.SellLimit(volume, price, symbol, sl, tp, ORDER_TIME_GTC, 0, "MT Bubble SellLimit");
+      trade.SellLimit(volume, price, symbol, sl, tp, ORDER_TIME_GTC, 0, "VPS Bubble SellLimit");
    }
    else if(typeStr == "BUY_STOP")
    {
       if(price <= 0) price = ask + 20 * pip;
       double sl = (slPips > 0) ? NormalizeDouble(price - slPips * pip, digits) : 0;
       double tp = (tpPips > 0) ? NormalizeDouble(price + tpPips * pip, digits) : 0;
-      trade.BuyStop(volume, price, symbol, sl, tp, ORDER_TIME_GTC, 0, "MT Bubble BuyStop");
+      trade.BuyStop(volume, price, symbol, sl, tp, ORDER_TIME_GTC, 0, "VPS Bubble BuyStop");
    }
    else if(typeStr == "SELL_STOP")
    {
       if(price <= 0) price = bid - 20 * pip;
       double sl = (slPips > 0) ? NormalizeDouble(price - slPips * pip, digits) : 0;
       double tp = (tpPips > 0) ? NormalizeDouble(price - tpPips * pip, digits) : 0;
-      trade.SellStop(volume, price, symbol, sl, tp, ORDER_TIME_GTC, 0, "MT Bubble SellStop");
+      trade.SellStop(volume, price, symbol, sl, tp, ORDER_TIME_GTC, 0, "VPS Bubble SellStop");
    }
 }
 

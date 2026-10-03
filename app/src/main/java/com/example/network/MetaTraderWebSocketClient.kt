@@ -86,7 +86,8 @@ class MetaTraderWebSocketClient {
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 _status.value = ConnectionStatus.ERROR
-                logEvent("Connection error: ${t.localizedMessage ?: "Unknown network failure"}")
+                val errorMsg = t.localizedMessage ?: "Network unreachable"
+                logEvent("VPS Connection Failed: $errorMsg (Check VPS IP, Port 8080 & Windows Firewall rule)")
                 Log.e(tag, "WebSocket failure", t)
             }
         })

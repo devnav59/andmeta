@@ -6,8 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,26 +16,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CastConnected
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Lan
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sensors
-import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
@@ -60,7 +53,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.ConnectionStatus
-import com.example.network.NetworkUtils
 import com.example.repository.TradingRepository
 import com.example.ui.components.StatusBadge
 import com.example.ui.theme.BuyGreen
@@ -74,7 +66,6 @@ import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ConnectionTab(
     modifier: Modifier = Modifier,
@@ -89,7 +80,7 @@ fun ConnectionTab(
     var inputIp by remember(repoIp) { mutableStateOf(repoIp) }
     var inputPort by remember(repoPort) { mutableStateOf(repoPort.toString()) }
 
-    val detectedIps = remember { NetworkUtils.getDeviceIpAddresses() }
+    val vpsPresets = listOf("185.120.45.60", "127.0.0.1", "localhost")
 
     LazyColumn(
         modifier = modifier
@@ -97,7 +88,7 @@ fun ConnectionTab(
             .padding(if (isCompactOverlay) 8.dp else 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Status Card
+        // VPS Status Card
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SlateCard),
@@ -112,18 +103,28 @@ fun ConnectionTab(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "MetaTrader Bridge Status",
-                            fontSize = 11.sp,
-                            color = TextSecondary,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Dns,
+                                contentDescription = null,
+                                tint = GoldAccent,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "وضعیت اتصال به سرور مجازی (VPS)",
+                                fontSize = 11.sp,
+                                color = TextSecondary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = when (status) {
-                                ConnectionStatus.CONNECTED -> "CONNECTED TO METATRADER"
-                                ConnectionStatus.LISTENING -> "LISTENING ON 0.0.0.0:$repoPort"
+                                ConnectionStatus.CONNECTED -> "CONNECTED TO VPS (LIVE)"
+                                ConnectionStatus.CONNECTING -> "CONNECTING TO VPS..."
                                 ConnectionStatus.SIMULATED -> "SIMULATOR ACTIVE"
+                                ConnectionStatus.LISTENING -> "STANDBY / READY FOR VPS"
                                 else -> "OFFLINE / DISCONNECTED"
                             },
                             fontSize = 13.sp,
@@ -132,9 +133,10 @@ fun ConnectionTab(
                             fontFamily = FontFamily.Monospace
                         )
                         Text(
-                            text = if (status == ConnectionStatus.LISTENING) "آماده دریافت داده از Winlator (Port $repoPort)" else "Local Bridge Server Port $repoPort",
+                            text = if (isSim) "Internal Simulator Mode" else "Target: ws://$inputIp:$inputPort",
                             fontSize = 10.sp,
-                            color = if (status == ConnectionStatus.LISTENING) GoldAccent else TextMuted
+                            color = TextMuted,
+                            fontFamily = FontFamily.Monospace
                         )
                     }
                     StatusBadge(status = status)
@@ -142,101 +144,7 @@ fun ConnectionTab(
             }
         }
 
-        // Winlator Helper Card (Special for running MT on same mobile phone)
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = SlateCardElevated),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, GoldAccent.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.Smartphone,
-                                contentDescription = null,
-                                tint = GoldAccent,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "راهنمای اتصال به Winlator (روی همین گوشی)",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary
-                            )
-                        }
-
-                        Button(
-                            onClick = { TradingRepository.testPingInternalServer() },
-                            colors = ButtonDefaults.buttonColors(containerColor = SlateCard),
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.height(28.dp)
-                        ) {
-                            Icon(Icons.Default.NetworkCheck, contentDescription = null, tint = BuyGreen, modifier = Modifier.size(12.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("تست سرور داخلی", fontSize = 10.sp, color = BuyGreen, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    Text(
-                        text = "سرور این اپلیکیشن روی پورت ۸۰۸۰ در پس‌زمینه همین گوشی فعال است. در متاتریدر Winlator در تنظیمات اکسپرت InpServerHost را روی یکی از این آی‌پی‌ها بگذارید:",
-                        fontSize = 11.sp,
-                        color = TextSecondary,
-                        lineHeight = 16.sp
-                    )
-
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        detectedIps.forEach { info ->
-                            val isSelected = inputIp == info.ip
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSelected) GoldAccent else SlateDark)
-                                    .border(1.dp, if (isSelected) GoldAccent else SlateBorder, RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        inputIp = info.ip
-                                        val port = inputPort.toIntOrNull() ?: 8080
-                                        TradingRepository.setServerConfig(info.ip, port)
-                                    }
-                                    .padding(horizontal = 8.dp, vertical = 5.dp)
-                            ) {
-                                Column {
-                                    Text(
-                                        text = info.ip,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isSelected) Color.Black else TextPrimary,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                    Text(
-                                        text = info.label,
-                                        fontSize = 9.sp,
-                                        color = if (isSelected) Color.Black.copy(alpha = 0.8f) else TextMuted
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Connection Form Card
+        // VPS IP Input Card
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SlateCard),
@@ -249,11 +157,26 @@ fun ConnectionTab(
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Storage,
+                            contentDescription = null,
+                            tint = BuyGreen,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "تنظیمات آدرس سرور مجازی (VPS)",
+                            fontSize = 13.sp,
+                            color = TextPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
                     Text(
-                        text = "تنظیمات آدرس سرور (Server Address)",
-                        fontSize = 12.sp,
-                        color = TextPrimary,
-                        fontWeight = FontWeight.Bold
+                        text = "آدرس IP عمومی سرور مجازی خود (Public IP) را در کادر زیر وارد کنید:",
+                        fontSize = 11.sp,
+                        color = TextSecondary
                     )
 
                     Row(
@@ -267,11 +190,12 @@ fun ConnectionTab(
                                 val port = inputPort.toIntOrNull() ?: 8080
                                 TradingRepository.setServerConfig(it, port)
                             },
-                            label = { Text("Server Host / IP", fontSize = 11.sp) },
+                            label = { Text("VPS Public IP / Domain", fontSize = 11.sp) },
+                            placeholder = { Text("مثلاً 185.120.45.60", fontSize = 11.sp) },
                             singleLine = true,
                             enabled = !isSim,
                             modifier = Modifier
-                                .weight(2f)
+                                .weight(2.2f)
                                 .testTag("server_ip_input"),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = BuyGreen,
@@ -312,46 +236,71 @@ fun ConnectionTab(
                         )
                     }
 
-                    // Connect / Disconnect Buttons
+                    // Quick VPS Presets
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val isConnected = status == ConnectionStatus.CONNECTED
-
-                        Button(
-                            onClick = {
-                                if (isConnected) {
-                                    TradingRepository.disconnect()
-                                } else {
-                                    val port = inputPort.toIntOrNull() ?: 8080
-                                    TradingRepository.setServerConfig(inputIp, port)
-                                    TradingRepository.connect()
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isConnected) SellRed else BuyGreen
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp)
-                                .testTag("connect_disconnect_button")
-                        ) {
-                            Icon(
-                                if (isConnected) Icons.Default.PowerSettingsNew else Icons.Default.CastConnected,
-                                contentDescription = null,
-                                tint = if (isConnected) Color.White else Color.Black,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isConnected) "DISCONNECT" else "START / REFRESH SERVER",
-                                color = if (isConnected) Color.White else Color.Black,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp
-                            )
+                        Text(text = "پریست‌های سریع:", fontSize = 10.sp, color = TextMuted)
+                        vpsPresets.forEach { preset ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(SlateCardElevated)
+                                    .border(1.dp, SlateBorder, RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        inputIp = preset
+                                        val port = inputPort.toIntOrNull() ?: 8080
+                                        TradingRepository.setServerConfig(preset, port)
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = preset,
+                                    fontSize = 10.sp,
+                                    color = TextSecondary,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
                         }
+                    }
+
+                    // Connect / Disconnect Buttons
+                    val isConnected = status == ConnectionStatus.CONNECTED
+
+                    Button(
+                        onClick = {
+                            if (isConnected) {
+                                TradingRepository.disconnect()
+                            } else {
+                                val port = inputPort.toIntOrNull() ?: 8080
+                                TradingRepository.setServerConfig(inputIp, port)
+                                TradingRepository.connect()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isConnected) SellRed else BuyGreen
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("connect_disconnect_button")
+                    ) {
+                        Icon(
+                            if (isConnected) Icons.Default.PowerSettingsNew else Icons.Default.CastConnected,
+                            contentDescription = null,
+                            tint = if (isConnected) Color.White else Color.Black,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isConnected) "قطع ارتباط از VPS (DISCONNECT)" else "اتصال به متاتریدر سرور مجازی (CONNECT TO VPS)",
+                            color = if (isConnected) Color.White else Color.Black,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
                     }
                 }
             }
@@ -381,7 +330,7 @@ fun ConnectionTab(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "شبیه‌ساز معاملات (Interactive Test Mode)",
+                                text = "شبیه‌ساز آفلاین معاملات (Interactive Test Mode)",
                                 fontSize = 12.sp,
                                 color = TextPrimary,
                                 fontWeight = FontWeight.SemiBold
@@ -389,7 +338,7 @@ fun ConnectionTab(
                         }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "تست لحظه‌ای اردرها، تغییر پیپ SL/TP و نوسان زنده سود بدون نیاز به متاتریدر روشن",
+                            text = "تست کامل دکمه‌ها و تغییر پیپ‌های SL/TP بدون نیاز به اتصال به VPS",
                             fontSize = 10.sp,
                             color = TextSecondary
                         )
@@ -430,7 +379,7 @@ fun ConnectionTab(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "COMMUNICATION LOGS",
+                            text = "VPS COMMUNICATION LOGS",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             color = TextMuted,
@@ -457,7 +406,7 @@ fun ConnectionTab(
                                     fontSize = 10.sp,
                                     color = if (log.contains("fail", ignoreCase = true) || log.contains("error", ignoreCase = true)) {
                                         SellRed
-                                    } else if (log.contains("pass", ignoreCase = true) || log.contains("connected", ignoreCase = true) || log.contains("running", ignoreCase = true)) {
+                                    } else if (log.contains("pass", ignoreCase = true) || log.contains("connected", ignoreCase = true) || log.contains("live", ignoreCase = true)) {
                                         BuyGreen
                                     } else {
                                         TextSecondary

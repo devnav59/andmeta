@@ -1,16 +1,16 @@
 //+------------------------------------------------------------------+
 //|                                     MetaTrader_Bridge_EA.mq4    |
 //|                    Copyright 2026, MetaTrader Floating Bubble    |
-//|                   Production-Ready MQL4 Bridge for Android App   |
+//|               Production-Ready MQL4 Bridge for Windows VPS       |
 //+------------------------------------------------------------------+
 #property copyright "MetaTrader Floating Bubble"
 #property link      "https://github.com"
-#property version   "2.00"
+#property version   "3.00"
 #property strict
 
 //--- Input parameters
-input string   InpServerHost     = "192.168.1.100"; // Android Phone or Bridge IP
-input int      InpServerPort     = 8080;            // Server Port
+input string   InpServerHost     = "127.0.0.1";     // Local Bridge IP on VPS
+input int      InpServerPort     = 8080;            // Bridge Port
 input int      InpTimerSeconds   = 1;               // Sync Interval (Seconds)
 input int      InpMagicNumber    = 101010;          // Magic Number
 input int      InpSlippage       = 20;              // Slippage Points
@@ -37,7 +37,7 @@ double GetPipValue(string sym)
 int OnInit()
 {
    EventSetTimer(InpTimerSeconds);
-   Print("[+] MetaTrader 4 Bridge EA initialized. Target: ", InpServerHost, ":", InpServerPort);
+   Print("[+] MetaTrader 4 VPS Bridge EA initialized. Target: ", InpServerHost, ":", InpServerPort);
    return INIT_SUCCEEDED;
 }
 
@@ -47,7 +47,7 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    EventKillTimer();
-   Print("[*] MetaTrader 4 Bridge EA deinitialized.");
+   Print("[*] MetaTrader 4 VPS Bridge EA deinitialized.");
 }
 
 //+------------------------------------------------------------------+
@@ -55,7 +55,7 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTimer()
 {
-   SyncWithAndroid();
+   SyncWithBridge();
 }
 
 //+------------------------------------------------------------------+
@@ -65,7 +65,7 @@ void OnTick()
 {
    if(TimeCurrent() - g_last_push_time >= InpTimerSeconds)
    {
-      SyncWithAndroid();
+      SyncWithBridge();
    }
 }
 
@@ -83,7 +83,6 @@ string BuildPositionsJson()
       if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
 
       int type = OrderType();
-      // Only include BUY (0) and SELL (1) open positions
       if(type != OP_BUY && type != OP_SELL) continue;
 
       int ticket       = OrderTicket();
@@ -112,9 +111,9 @@ string BuildPositionsJson()
 }
 
 //+------------------------------------------------------------------+
-//| Sync positions with Android and execute received commands        |
+//| Sync positions with VPS Bridge and execute received commands     |
 //+------------------------------------------------------------------+
-void SyncWithAndroid()
+void SyncWithBridge()
 {
    g_last_push_time = TimeCurrent();
    string jsonPayload = BuildPositionsJson();
@@ -142,9 +141,9 @@ void SyncWithAndroid()
    else if(res == -1)
    {
       int err = GetLastError();
-      if(err == 4060) // ERR_FUNCTION_NOT_ALLOWED
+      if(err == 4060)
       {
-         Print("[-] WebRequest Error 4060: Please add URL in Tools -> Options -> Expert Advisors -> Allow WebRequest");
+         Print("[-] WebRequest Error 4060: In MT4 on VPS, go to Tools -> Options -> Expert Advisors -> Allow WebRequest and add http://", InpServerHost, ":", InpServerPort);
       }
    }
 }
@@ -211,18 +210,8 @@ void ExecuteOpenOrder(string json)
       cmd = OP_SELLLIMIT;
       openPrice = (price > 0) ? price : bid + 20 * pip;
    }
-   else if(typeStr == "BUY_STOP")
-   {
-      cmd = OP_BUYSTOP;
-      openPrice = (price > 0) ? price : ask + 20 * pip;
-   }
-   else if(typeStr == "SELL_STOP")
-   {
-      cmd = OP_SELLSTOP;
-      openPrice = (price > 0) ? price : bid - 20 * pip;
-   }
 
-   bool isBuyType = (cmd == OP_BUY || cmd == OP_BUYLIMIT || cmd == OP_BUYSTOP);
+   bool isBuyType = (cmd == OP_BUY || cmd == OP_BUYLIMIT);
    double sl = 0.0;
    double tp = 0.0;
 
@@ -231,11 +220,11 @@ void ExecuteOpenOrder(string json)
    if(tpPips > 0)
       tp = NormalizeDouble(isBuyType ? openPrice + tpPips * pip : openPrice - tpPips * pip, digits);
 
-   int ticket = OrderSend(symbol, cmd, volume, openPrice, InpSlippage, sl, tp, "MT Bubble", InpMagicNumber, 0, (cmd == OP_BUY) ? clrGreen : clrRed);
+   int ticket = OrderSend(symbol, cmd, volume, openPrice, InpSlippage, sl, tp, "VPS Bubble", InpMagicNumber, 0, (cmd == OP_BUY) ? clrGreen : clrRed);
    if(ticket > 0)
-      Print("[+] MT4 Order placed successfully. Ticket: ", ticket);
+      Print("[+] VPS MT4 Order placed successfully. Ticket: ", ticket);
    else
-      Print("[-] MT4 OrderSend failed. Error: ", GetLastError());
+      Print("[-] VPS MT4 OrderSend failed. Error: ", GetLastError());
 }
 
 //+------------------------------------------------------------------+
@@ -267,7 +256,7 @@ void ExecuteModifySlTp(string json)
    double newSl = currentSl;
    double newTp = currentTp;
 
-   if(type == OP_BUY || type == OP_BUYLIMIT || type == OP_BUYSTOP)
+   if(type == OP_BUY || type == OP_BUYLIMIT)
    {
       if(slDelta != 0) newSl = NormalizeDouble(baseSl + (slDelta * pip), digits);
       if(tpDelta != 0) newTp = NormalizeDouble(baseTp + (tpDelta * pip), digits);
@@ -279,9 +268,9 @@ void ExecuteModifySlTp(string json)
    }
 
    if(OrderModify(ticket, openPrice, newSl, newTp, 0, clrOrange))
-      Print("[+] MT4 Modified ticket #", ticket, " SL=", newSl, " TP=", newTp);
+      Print("[+] VPS MT4 Modified ticket #", ticket, " SL=", newSl, " TP=", newTp);
    else
-      Print("[-] MT4 OrderModify failed. Error: ", GetLastError());
+      Print("[-] VPS MT4 OrderModify failed. Error: ", GetLastError());
 }
 
 //+------------------------------------------------------------------+
@@ -296,9 +285,9 @@ void ExecuteClosePosition(string json)
 
    double closePrice = (OrderType() == OP_BUY) ? MarketInfo(OrderSymbol(), MODE_BID) : MarketInfo(OrderSymbol(), MODE_ASK);
    if(OrderClose(ticket, OrderLots(), closePrice, InpSlippage, clrWhite))
-      Print("[+] MT4 Position closed ticket #", ticket);
+      Print("[+] VPS MT4 Position closed ticket #", ticket);
    else
-      Print("[-] MT4 OrderClose failed. Error: ", GetLastError());
+      Print("[-] VPS MT4 OrderClose failed. Error: ", GetLastError());
 }
 
 //+------------------------------------------------------------------+

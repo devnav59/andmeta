@@ -72,11 +72,11 @@ object TradingRepository {
 
         when {
             isSim -> ConnectionStatus.SIMULATED
-            isRecentlyActive -> ConnectionStatus.CONNECTED
             wsStatus == ConnectionStatus.CONNECTED -> ConnectionStatus.CONNECTED
-            isListening -> ConnectionStatus.LISTENING
+            isRecentlyActive -> ConnectionStatus.CONNECTED
             wsStatus == ConnectionStatus.CONNECTING -> ConnectionStatus.CONNECTING
             wsStatus == ConnectionStatus.ERROR -> ConnectionStatus.ERROR
+            isListening -> ConnectionStatus.LISTENING
             else -> ConnectionStatus.DISCONNECTED
         }
     }.stateIn(scope, SharingStarted.Eagerly, ConnectionStatus.LISTENING)
