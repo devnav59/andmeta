@@ -5,167 +5,97 @@ object MqlCodeProvider {
     val universalFirewallCommand: String =
         "netsh advfirewall firewall add rule name=\"MT_Bridge_8080\" dir=in action=allow protocol=TCP localport=8080"
 
+    val oneLineVpsCommand: String =
+        "powershell -ExecutionPolicy Bypass -NoExit -Command \"VAR_P=8080; try{netsh advfirewall firewall add rule name='MT_Bridge_8080' dir=in action=allow protocol=TCP localport=VAR_P|Out-Null}catch{}; VAR_L=New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any,VAR_P); VAR_L.Start(); Write-Host '[+] MetaTrader VPS Bridge Server is RUNNING on Port 8080!' -F Green; Write-Host 'Ready for Android and MetaTrader EA. Keep window open.' -F Yellow; VAR_D='{\\\"action\\\":\\\"POSITIONS_UPDATE\\\",\\\"data\\\":[]}'; VAR_C=[System.Collections.ArrayList]::new(); while(1){VAR_c=VAR_L.AcceptTcpClient(); VAR_s=VAR_c.GetStream(); VAR_b=New-Object byte[] 65536; VAR_r=VAR_s.Read(VAR_b,0,VAR_b.Length); if(VAR_r -gt 0){VAR_t=[System.Text.Encoding]::UTF8.GetString(VAR_b,0,VAR_r); VAR_i=VAR_t.IndexOf(\\\"`r`n`r`n\\\"); if(VAR_t.StartsWith('POST /api/positions')){VAR_D=VAR_t.Substring(VAR_i+4).Trim(); VAR_k=if(VAR_C.Count -gt 0){VAR_a=VAR_C.ToArray(); VAR_C.Clear(); '['+(VAR_a -join ',')+']'}else{'[]'}; VAR_o='{\\\"status\\\":\\\"ok\\\",\\\"commands\\\":'+VAR_k+'}'}elseif(VAR_t.StartsWith('POST /api/command')){VAR_C.Add(VAR_t.Substring(VAR_i+4).Trim()); VAR_o='{\\\"status\\\":\\\"queued\\\"}'}else{VAR_o=VAR_D}; VAR_ob=[System.Text.Encoding]::UTF8.GetBytes(VAR_o); VAR_h=[System.Text.Encoding]::UTF8.GetBytes(\\\"HTTP/1.1 200 OK`r`nContent-Type: application/json`r`nAccess-Control-Allow-Origin: *`r`nContent-Length: \\\"+VAR_ob.Length+\\\"`r`nConnection: close`r`n`r`n\\\"); VAR_s.Write(VAR_h,0,VAR_h.Length); VAR_s.Write(VAR_ob,0,VAR_ob.Length); VAR_s.Flush()}; VAR_c.Close()}\""
+            .replace("VAR_", "$")
+
     val guideTextFa: String = """
-راهنمای اتصال به متاتریدر روی سرور مجازی (Windows VPS):
+راهنمای حل مشکل بسته شدن پنجره و راه‌اندازی سریع سرور:
 
-★ ساده‌ترین روش (پیشنهادی): بدون نیاز به نصب پایتون (با PowerShell داخلی ویندوز)
-روی سرور مجازی ویندوز، هیچ نیازی به نصب پایتون ندارید! ویندوز به صورت پیش‌فرض PowerShell دارد.
+علت بسته شدن فایل bridge.ps1:
+در ویندوز سرور، به دلایل امنیتی سیاست اجرای اسکریپت‌ها (ExecutionPolicy) بسته است و با اجرای فایل .ps1، پاورشل ارور قرمز داده و در کسری از ثانیه پنجره را می‌بندد.
 
-۱. باز کردن پورت فایروال:
-   روی VPS، پنجره Command Prompt یا PowerShell را با Run as Administrator باز کنید و این دستور را وارد و اینتر کنید:
-   netsh advfirewall firewall add rule name="MT_Bridge_8080" dir=in action=allow protocol=TCP localport=8080
+★ روش ۱: اجرای فوری ۱-خطی در ترمینال سرور مجازی (پیشنهادی - بدون نیاز به ساخت فایل)
+۱. در سرور مجازی، پنجره Command Prompt (یا PowerShell) را با Run as Administrator باز کنید.
+۲. دکمه "کپی دستور ۱-خطی سرور" را در بالای همین صفحه بزنید.
+۳. دستور کپی‌شده را در ترمینال Paste کرده و Enter بزنید.
+۴. سرور بلافاصله روی پورت ۸۰۸۰ اجرا شده، فایروال را باز کرده و پنجره باز باقی می‌ماند!
 
-۲. اجرای سرور بریج (بدون نیاز به پایتون):
-   - روی دسکتاپ VPS یک فایل متنی به نام bridge.ps1 بسازید.
-   - کدهای تب "PowerShell (بدون پایتون)" را داخل آن کپی و ذخیره کنید.
-   - روی فایل راست‌کلیک کرده و گزینه "Run with PowerShell" را انتخاب کنید.
-   - پنجره آبی‌رنگ باز شده و پیام سبز رنگ "Server is RUNNING on Port 8080" نمایان می‌شود!
+★ روش ۲: ساخت فایل run_server.bat (دابل‌کلیک بدون بسته شدن)
+۱. روی دسکتاپ سرور مجازی، یک فایل به نام run_server.bat بسازید.
+۲. کدهای تب "run_server.bat" را داخل آن کپی و ذخیره کنید.
+۳. روی فایل run_server.bat دابل‌کلیک کنید. این فایل قفل امنیتی ویندوز را دور می‌زند و هرگز بسته نمی‌شود.
 
-۳. اجرای اکسپرت در متاتریدر روی VPS:
-   - اکسپرت MetaTrader_Bridge_EA را در متاتریدر با F7 کامپایل کنید و روی یک چارت بیندازید.
-   - در متاتریدر کلیدهای Ctrl + O را بزنید و در تب Expert Advisors تیک Allow Algo Trading و تیک Allow WebRequest را زده و آدرس http://127.0.0.1:8080 را اضافه کنید.
+★ مرحله بعد در متاتریدر روی VPS:
+۱. اکسپرت MetaTrader_Bridge_EA را در متاتریدر با کلید F7 کامپایل کنید و روی یک چارت بیندازید.
+۲. در متاتریدر کلیدهای Ctrl + O را بزنید و در تب Expert Advisors تیک‌های Allow Algo Trading و Allow WebRequest را فعال کرده و آدرس http://127.0.0.1:8080 را اضافه کنید.
 
-۴. اتصال در اپلیکیشن موبایل:
-   - در تب اتصال اپلیکیشن، در کادر IP، آدرس IP عمومی سرور مجازی خود (Public IP) را وارد کنید.
-   - دکمه بزرگ "CONNECT TO VPS" را بزنید؛ وضعیت فوراً سبز (CONNECTED TO VPS LIVE) شده و تمام معاملات روی گوشی شما ظاهر می‌شوند!
-
-----------------------------------------------------
-★ اگر مایلید از پایتون استفاده کنید:
-۱. پایتون ۳ را از python.org نصب کنید (تیک Add Python to PATH حتماً باید خورده باشد).
-۲. کدهای تب "start_bridge.bat" و "bridge.py" را در یک پوشه ذخیره و فایل bat را اجرا کنید.
+★ مرحله نهایی در موبایل:
+در تب اتصال اپلیکیشن، IP سرور مجازی را وارد کرده و دکمه "CONNECT TO VPS" را بزنید. معاملات فوراً ظاهر می‌شوند!
     """.trimIndent()
 
-    val powerShellBridgeCode: String = """
-# MetaTrader VPS Bridge Server in Pure PowerShell (No Python Needed!)
-VAR_Port = 8080
-VAR_Host.UI.RawUI.WindowTitle = "MetaTrader VPS Bridge Server (PowerShell Native)"
-
-Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "   MetaTrader VPS Bridge Server (Pure PowerShell)        " -ForegroundColor Green
-Write-Host "   NO Python Installation Required - 100% Built-in       " -ForegroundColor Yellow
-Write-Host "==========================================================" -ForegroundColor Cyan
-
-# 1. Open Windows Firewall for Port 8080
-try {
-    netsh advfirewall firewall add rule name="MT_Bridge_8080" dir=in action=allow protocol=TCP localport=VAR_Port | Out-Null
-    Write-Host "[+] Port VAR_Port successfully allowed in Firewall." -ForegroundColor Green
-} catch {
-    Write-Host "[!] Note: Run as Administrator to allow Firewall." -ForegroundColor Yellow
-}
-
-# 2. Start HTTP Listener on 0.0.0.0:8080
-VAR_Listener = New-Object System.Net.HttpListener
-VAR_Listener.Prefixes.Add("http://*:VAR_Port/")
-
-try {
-    VAR_Listener.Start()
-    Write-Host "[+] Server is RUNNING on http://*:VAR_Port/" -ForegroundColor Green
-    Write-Host "[*] Android App target: http://<YOUR_VPS_PUBLIC_IP>:VAR_Port" -ForegroundColor Cyan
-    Write-Host "[*] MetaTrader EA target: http://127.0.0.1:VAR_Port/api/positions" -ForegroundColor Cyan
-    Write-Host "==========================================================" -ForegroundColor Cyan
-} catch {
-    Write-Host "[-] Failed to bind port VAR_Port. Error: VAR_Err" -ForegroundColor Red
-    Read-Host "Press Enter to exit"
-    exit
-}
-
-VAR_LatestPositionsJson = '{"action":"POSITIONS_UPDATE","data":[]}'
-VAR_PendingCommands = [System.Collections.ArrayList]::new()
-VAR_Lock = [System.Object]::new()
-
-while (VAR_Listener.IsListening) {
-    try {
-        VAR_Context = VAR_Listener.GetContext()
-        VAR_Request = VAR_Context.Request
-        VAR_Response = VAR_Context.Response
-
-        VAR_Response.Headers.Add("Access-Control-Allow-Origin", "*")
-        VAR_Response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        VAR_Response.Headers.Add("Access-Control-Allow-Headers", "Content-Type")
-
-        if (VAR_Request.HttpMethod -eq "OPTIONS") {
-            VAR_Response.StatusCode = 200
-            VAR_Response.Close()
-            continue
-        }
-
-        VAR_Path = VAR_Request.Url.AbsolutePath
-        VAR_ResponseString = ""
-
-        if (VAR_Request.HttpMethod -eq "GET") {
-            if (VAR_Path -eq "/api/positions" -or VAR_Path -eq "/" -or VAR_Path -eq "/status") {
-                [System.Threading.Monitor]::Enter(VAR_Lock)
-                try { VAR_ResponseString = VAR_LatestPositionsJson } finally { [System.Threading.Monitor]::Exit(VAR_Lock) }
-                VAR_Response.ContentType = "application/json; charset=utf-8"
-                VAR_Response.StatusCode = 200
-            } else {
-                VAR_Response.StatusCode = 404
-                VAR_ResponseString = '{"error":"Not Found"}'
-            }
-        }
-        elseif (VAR_Request.HttpMethod -eq "POST") {
-            VAR_Reader = New-Object System.IO.StreamReader(VAR_Request.InputStream, VAR_Request.ContentEncoding)
-            VAR_Body = VAR_Reader.ReadToEnd()
-            VAR_Reader.Close()
-
-            if (VAR_Path -eq "/api/positions") {
-                [System.Threading.Monitor]::Enter(VAR_Lock)
-                try {
-                    VAR_LatestPositionsJson = VAR_Body
-                    VAR_CmdsJson = if (VAR_PendingCommands.Count -gt 0) {
-                        VAR_arr = VAR_PendingCommands.ToArray()
-                        VAR_PendingCommands.Clear()
-                        "[" + (VAR_arr -join ",") + "]"
-                    } else { "[]" }
-                    VAR_ResponseString = "{\"status\":\"ok\",\"commands\":" + VAR_CmdsJson + "}"
-                } finally { [System.Threading.Monitor]::Exit(VAR_Lock) }
-                VAR_Response.ContentType = "application/json; charset=utf-8"
-                VAR_Response.StatusCode = 200
-            }
-            elseif (VAR_Path -eq "/api/command" -or VAR_Path -eq "/api/order") {
-                [System.Threading.Monitor]::Enter(VAR_Lock)
-                try {
-                    [void]VAR_PendingCommands.Add(VAR_Body)
-                    Write-Host "[+] Command received from Android: VAR_Body" -ForegroundColor Green
-                } finally { [System.Threading.Monitor]::Exit(VAR_Lock) }
-                VAR_ResponseString = '{"status":"queued"}'
-                VAR_Response.ContentType = "application/json; charset=utf-8"
-                VAR_Response.StatusCode = 200
-            }
-        }
-
-        VAR_Buffer = [System.Text.Encoding]::UTF8.GetBytes(VAR_ResponseString)
-        VAR_Response.ContentLength64 = VAR_Buffer.Length
-        VAR_Response.OutputStream.Write(VAR_Buffer, 0, VAR_Buffer.Length)
-        VAR_Response.OutputStream.Close()
-    } catch {}
-}
-    """.trimIndent().replace("VAR_Err", "$" + "_").replace("VAR_", "$")
-
-    val batchScriptCode: String = """
+    val runServerBatCode: String = """
 @echo off
 title MetaTrader VPS Bridge Server
-color 0B
+color 0A
 cls
 echo ==========================================================
 echo        MetaTrader VPS Bridge Server for Android
+echo   Zero-Installation - Runs on 100%% of Windows VPS
 echo ==========================================================
 echo.
-netsh advfirewall firewall add rule name="MT_Bridge_8080" dir=in action=allow protocol=TCP localport=8080 >nul 2>&1
-python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Python 3 is NOT installed on this VPS!
-    echo Download: https://www.python.org/downloads/
-    echo (Make sure to check "Add Python to PATH")
-    pause
-    exit /b 1
-)
-python bridge.py 8080
-if %errorlevel% neq 0 (
-    echo [!] Server stopped with error code %errorlevel%.
-)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+    "VAR_Port = 8080; " ^
+    "Write-Host '[*] Configuring Firewall for Port ' VAR_Port '...' -ForegroundColor Cyan; " ^
+    "try { netsh advfirewall firewall add rule name='MT_Bridge_8080' dir=in action=allow protocol=TCP localport=VAR_Port | Out-Null } catch {}; " ^
+    "try { " ^
+    "    VAR_Listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, VAR_Port); " ^
+    "    VAR_Listener.Start(); " ^
+    "    Write-Host '[+] ==========================================================' -ForegroundColor Green; " ^
+    "    Write-Host '[+] MetaTrader VPS Bridge Server is RUNNING on Port ' VAR_Port -ForegroundColor Green; " ^
+    "    Write-Host '[+] Ready for Android App and MetaTrader EA!' -ForegroundColor Green; " ^
+    "    Write-Host '[+] ==========================================================' -ForegroundColor Green; " ^
+    "    Write-Host 'Keep this window OPEN while trading.`n' -ForegroundColor Yellow; " ^
+    "    VAR_LatestPositions = '{\"action\":\"POSITIONS_UPDATE\",\"data\":[]}'; " ^
+    "    VAR_PendingCommands = [System.Collections.ArrayList]::new(); " ^
+    "    while (VAR_true) { " ^
+    "        VAR_client = VAR_Listener.AcceptTcpClient(); " ^
+    "        VAR_stream = VAR_client.GetStream(); " ^
+    "        VAR_buffer = New-Object byte[] 65536; " ^
+    "        VAR_bytesRead = VAR_stream.Read(VAR_buffer, 0, VAR_buffer.Length); " ^
+    "        if (VAR_bytesRead -gt 0) { " ^
+    "            VAR_req = [System.Text.Encoding]::UTF8.GetString(VAR_buffer, 0, VAR_bytesRead); " ^
+    "            VAR_respBody = ''; " ^
+    "            if (VAR_req.StartsWith('POST /api/positions')) { " ^
+    "                VAR_idx = VAR_req.IndexOf(\"`r`n`r`n\"); " ^
+    "                if (VAR_idx -ge 0) { VAR_LatestPositions = VAR_req.Substring(VAR_idx + 4).Trim() }; " ^
+    "                VAR_cmds = if (VAR_PendingCommands.Count -gt 0) { VAR_a = VAR_PendingCommands.ToArray(); VAR_PendingCommands.Clear(); '[' + (VAR_a -join ',') + ']' } else { '[]' }; " ^
+    "                VAR_respBody = '{\"status\":\"ok\",\"commands\":' + VAR_cmds + '}'; " ^
+    "            } elseif (VAR_req.StartsWith('POST /api/command') -or VAR_req.StartsWith('POST /api/order')) { " ^
+    "                VAR_idx = VAR_req.IndexOf(\"`r`n`r`n\"); " ^
+    "                if (VAR_idx -ge 0) { [void]VAR_PendingCommands.Add(VAR_req.Substring(VAR_idx + 4).Trim()) }; " ^
+    "                VAR_respBody = '{\"status\":\"queued\"}'; " ^
+    "            } else { " ^
+    "                VAR_respBody = VAR_LatestPositions; " ^
+    "            }; " ^
+    "            VAR_bodyBytes = [System.Text.Encoding]::UTF8.GetBytes(VAR_respBody); " ^
+    "            VAR_header = \"HTTP/1.1 200 OK`r`nContent-Type: application/json; charset=utf-8`r`nAccess-Control-Allow-Origin: *`r`nContent-Length: \" + VAR_bodyBytes.Length + \"`r`nConnection: close`r`n`r`n\"; " ^
+    "            VAR_headerBytes = [System.Text.Encoding]::UTF8.GetBytes(VAR_header); " ^
+    "            VAR_stream.Write(VAR_headerBytes, 0, VAR_headerBytes.Length); " ^
+    "            VAR_stream.Write(VAR_bodyBytes, 0, VAR_bodyBytes.Length); " ^
+    "            VAR_stream.Flush(); " ^
+    "        }; " ^
+    "        VAR_client.Close(); " ^
+    "    } " ^
+    "} catch { " ^
+    "    Write-Host '[-] Server Error: ' VAR_Err -ForegroundColor Red; " ^
+    "} "
+echo.
+echo ==========================================================
+echo [!] Server stopped.
+echo ==========================================================
 pause
-    """.trimIndent()
+    """.trimIndent().replace("VAR_Err", "$" + "_").replace("VAR_", "$")
 
     val mql5Code: String = """
 //+------------------------------------------------------------------+
@@ -597,122 +527,5 @@ double ExtractJsonDouble(string json, string key)
    if(end <= pos) return 0.0;
    return StringToDouble(StringSubstr(json, pos, end - pos));
 }
-    """.trimIndent()
-
-    val pythonBridgeCode: String = """
-#!/usr/bin/env python3
-# MetaTrader VPS Bridge Server (bridge.py)
-import sys, json, threading, hashlib, base64, struct
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from socketserver import ThreadingMixIn
-
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
-lock = threading.Lock()
-latest_positions = []
-pending_commands = []
-connected_ws_clients = []
-
-def ws_handshake_key(key):
-    guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-    return base64.b64encode(hashlib.sha1((key + guid).encode('utf-8')).digest()).decode('utf-8')
-
-def broadcast_positions(positions_data):
-    msg = json.dumps({"action": "POSITIONS_UPDATE", "data": positions_data}).encode('utf-8')
-    length = len(msg)
-    header = bytes([0x81, length]) if length <= 125 else struct.pack('!BBH', 0x81, 126, length) if length <= 65535 else struct.pack('!BBQ', 0x81, 127, length)
-    frame = header + msg
-    with lock:
-        dead = []
-        for client in connected_ws_clients:
-            try: client.sendall(frame)
-            except: dead.append(client)
-        for client in dead:
-            if client in connected_ws_clients: connected_ws_clients.remove(client)
-
-class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-    daemon_threads = True
-
-class BridgeHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.headers.get('Upgrade', '').lower() == 'websocket':
-            key = self.headers.get('Sec-WebSocket-Key', '')
-            if key:
-                resp = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + ws_handshake_key(key) + "\r\n\r\n"
-                self.wfile.write(resp.encode('utf-8'))
-                sock = self.connection
-                sock.setblocking(True)
-                with lock: connected_ws_clients.append(sock)
-                print(f"[+] Android connected from {self.client_address[0]}")
-                with lock: cur = list(latest_positions)
-                if cur: broadcast_positions(cur)
-                self.handle_ws(sock)
-                return
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        with lock:
-            self.wfile.write(json.dumps({"status": "online", "positions": len(latest_positions), "clients": len(connected_ws_clients)}).encode('utf-8'))
-
-    def do_POST(self):
-        clen = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(clen).decode('utf-8', errors='ignore')
-        try:
-            d = json.loads(body)
-            act = d.get('action')
-            if act == 'POSITIONS_UPDATE':
-                global latest_positions
-                pos = d.get('data', [])
-                with lock: latest_positions = pos
-                broadcast_positions(pos)
-                with lock:
-                    cmds = list(pending_commands)
-                    pending_commands.clear()
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "ok", "commands": cmds}).encode('utf-8'))
-                return
-            elif act in ['OPEN_ORDER', 'MODIFY_SL_TP', 'CLOSE_POSITION']:
-                with lock: pending_commands.append(d)
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "queued"}).encode('utf-8'))
-                return
-        except Exception as e:
-            print("Error:", e)
-        self.send_response(400)
-        self.end_headers()
-
-    def handle_ws(self, sock):
-        while True:
-            try:
-                head = sock.recv(2)
-                if not head or len(head) < 2 or (head[0] & 0x0F == 0x08): break
-                is_mask = (head[1] & 0x80) != 0
-                plen = head[1] & 0x7F
-                if plen == 126: plen = struct.unpack('!H', sock.recv(2))[0]
-                elif plen == 127: plen = struct.unpack('!Q', sock.recv(8))[0]
-                mask = sock.recv(4) if is_mask else b''
-                data = bytearray()
-                while len(data) < plen:
-                    chunk = sock.recv(plen - len(data))
-                    if not chunk: break
-                    data.extend(chunk)
-                if is_mask:
-                    for i in range(len(data)): data[i] ^= mask[i % 4]
-                cmd = json.loads(data.decode('utf-8', errors='ignore'))
-                if cmd.get('action') in ['OPEN_ORDER', 'MODIFY_SL_TP', 'CLOSE_POSITION']:
-                    with lock: pending_commands.append(cmd)
-            except: break
-        with lock:
-            if sock in connected_ws_clients: connected_ws_clients.remove(sock)
-        print("[-] Android disconnected")
-
-    def log_message(self, format, *args): return
-
-if __name__ == '__main__':
-    print(f"[*] MetaTrader VPS Bridge Server running on port {PORT}")
-    ThreadedHTTPServer(('0.0.0.0', PORT), BridgeHandler).serve_forever()
     """.trimIndent()
 }

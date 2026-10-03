@@ -21,8 +21,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -64,24 +65,20 @@ fun EaGuideTab(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var selectedCodeTab by remember { mutableIntStateOf(0) } // 0 = PowerShell, 1 = MQL5, 2 = MQL4, 3 = Python, 4 = Bat
+    var selectedCodeTab by remember { mutableIntStateOf(0) } // 0 = run_server.bat, 1 = MT5, 2 = MT4
     var copiedCode by remember { mutableStateOf(false) }
-    var copiedFirewall by remember { mutableStateOf(false) }
+    var copiedInstantCmd by remember { mutableStateOf(false) }
 
     val currentCode = when (selectedCodeTab) {
-        0 -> MqlCodeProvider.powerShellBridgeCode
+        0 -> MqlCodeProvider.runServerBatCode
         1 -> MqlCodeProvider.mql5Code
-        2 -> MqlCodeProvider.mql4Code
-        3 -> MqlCodeProvider.pythonBridgeCode
-        else -> MqlCodeProvider.batchScriptCode
+        else -> MqlCodeProvider.mql4Code
     }
 
     val currentFileName = when (selectedCodeTab) {
-        0 -> "bridge.ps1 (بدون نیاز به پایتون)"
+        0 -> "run_server.bat (بدون پایتون - هرگز بسته نمی‌شود)"
         1 -> "MetaTrader_Bridge_EA.mq5"
-        2 -> "MetaTrader_Bridge_EA.mq4"
-        3 -> "bridge.py (پایتون)"
-        else -> "start_bridge.bat"
+        else -> "MetaTrader_Bridge_EA.mq4"
     }
 
     LazyColumn(
@@ -90,14 +87,14 @@ fun EaGuideTab(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Universal Firewall Command Card (Works in CMD and PowerShell)
+        // Fast 1-Click Instant Command Card (No file creation needed!)
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SlateCardElevated),
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, GoldAccent.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                    .border(1.5.dp, BuyGreen.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
             ) {
                 Column(
                     modifier = Modifier
@@ -112,14 +109,14 @@ fun EaGuideTab(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                Icons.Default.Security,
+                                Icons.Default.FlashOn,
                                 contentDescription = null,
                                 tint = GoldAccent,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "دستور باز کردن پورت ۸۰۸۰ در فایروال VPS",
+                                text = "روش فوق‌سریع: دستور ۱-خطی (بدون ساخت هیچ فایلی!)",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = TextPrimary
@@ -129,25 +126,25 @@ fun EaGuideTab(
                         Button(
                             onClick = {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("Netsh Firewall Command", MqlCodeProvider.universalFirewallCommand)
+                                val clip = ClipData.newPlainText("1-Line Server Command", MqlCodeProvider.oneLineVpsCommand)
                                 clipboard.setPrimaryClip(clip)
-                                copiedFirewall = true
+                                copiedInstantCmd = true
                             },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (copiedFirewall) BuyGreen else GoldAccent
+                                containerColor = if (copiedInstantCmd) BuyGreen else GoldAccent
                             ),
                             shape = RoundedCornerShape(6.dp),
                             modifier = Modifier.height(28.dp)
                         ) {
                             Icon(
-                                if (copiedFirewall) Icons.Default.Check else Icons.Default.ContentCopy,
+                                if (copiedInstantCmd) Icons.Default.Check else Icons.Default.ContentCopy,
                                 contentDescription = null,
                                 tint = Color.Black,
                                 modifier = Modifier.size(12.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (copiedFirewall) "کپی شد!" else "کپی دستور ترمینال",
+                                text = if (copiedInstantCmd) "کپی شد!" else "کپی دستور ۱-خطی",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.Black
@@ -156,7 +153,7 @@ fun EaGuideTab(
                     }
 
                     Text(
-                        text = "در سرور مجازی، Command Prompt یا PowerShell را باز کرده (Run as Administrator) و این دستور را Paste و Enter کنید (بدون ارور کار می‌کند):",
+                        text = "کافیست در سرور مجازی، PowerShell یا CMD را باز کرده و این دستور را Paste و Enter کنید. سرور فوراً فعال شده و پنجره باز می‌ماند:",
                         fontSize = 11.sp,
                         color = TextSecondary
                     )
@@ -169,7 +166,7 @@ fun EaGuideTab(
                             .padding(8.dp)
                     ) {
                         Text(
-                            text = MqlCodeProvider.universalFirewallCommand,
+                            text = MqlCodeProvider.oneLineVpsCommand.take(160) + " ...",
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
                             color = BuyGreen
@@ -179,7 +176,7 @@ fun EaGuideTab(
             }
         }
 
-        // VPS Setup Step-by-Step Guide Card
+        // Setup Guide Card
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = SlateCard),
@@ -201,7 +198,7 @@ fun EaGuideTab(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "راهنمای اتصال متاتریدر سرور مجازی به موبایل",
+                            text = "راهنمای حل مشکل بسته شدن پنجره در سرور مجازی",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             color = TextPrimary
@@ -231,7 +228,7 @@ fun EaGuideTab(
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Scrollable Tab Selector for files
+                    // Scrollable Tab Selector
                     ScrollableTabRow(
                         selectedTabIndex = selectedCodeTab,
                         containerColor = SlateCardElevated,
@@ -248,7 +245,7 @@ fun EaGuideTab(
                         Tab(
                             selected = selectedCodeTab == 0,
                             onClick = { selectedCodeTab = 0; copiedCode = false },
-                            text = { Text("PowerShell (بدون پایتون)", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                            text = { Text("run_server.bat (بدون بسته شدن)", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                         )
                         Tab(
                             selected = selectedCodeTab == 1,
@@ -259,16 +256,6 @@ fun EaGuideTab(
                             selected = selectedCodeTab == 2,
                             onClick = { selectedCodeTab = 2; copiedCode = false },
                             text = { Text("MT4 (MQL4)", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
-                        )
-                        Tab(
-                            selected = selectedCodeTab == 3,
-                            onClick = { selectedCodeTab = 3; copiedCode = false },
-                            text = { Text("bridge.py", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
-                        )
-                        Tab(
-                            selected = selectedCodeTab == 4,
-                            onClick = { selectedCodeTab = 4; copiedCode = false },
-                            text = { Text("start_bridge.bat", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                         )
                     }
 
