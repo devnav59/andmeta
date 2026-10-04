@@ -72,13 +72,17 @@ fun EaGuideTab(
     val currentCode = when (selectedCodeTab) {
         0 -> MqlCodeProvider.runServerBatCode
         1 -> MqlCodeProvider.mql5Code
-        else -> MqlCodeProvider.mql4Code
+        2 -> MqlCodeProvider.mql4Code
+        3 -> MqlCodeProvider.pineScriptCode
+        else -> MqlCodeProvider.tampermonkeyScriptCode
     }
 
     val currentFileName = when (selectedCodeTab) {
         0 -> "run_server.bat (بدون پایتون - هرگز بسته نمی‌شود)"
         1 -> "MetaTrader_Bridge_EA.mq5"
-        else -> "MetaTrader_Bridge_EA.mq4"
+        2 -> "MetaTrader_Bridge_EA.mq4"
+        3 -> "tradingview_strategy_with_signal_row.pine"
+        else -> "tradingview_watcher.user.js (اتوتریدر وب)"
     }
 
     LazyColumn(
@@ -256,6 +260,16 @@ fun EaGuideTab(
                             selected = selectedCodeTab == 2,
                             onClick = { selectedCodeTab = 2; copiedCode = false },
                             text = { Text("MT4 (MQL4)", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                        )
+                        Tab(
+                            selected = selectedCodeTab == 3,
+                            onClick = { selectedCodeTab = 3; copiedCode = false },
+                            text = { Text("اندیکاتور تریدینگ‌ویو (Pine)", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                        )
+                        Tab(
+                            selected = selectedCodeTab == 4,
+                            onClick = { selectedCodeTab = 4; copiedCode = false },
+                            text = { Text("اسکریپت تمپرمانکی وب", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                         )
                     }
 

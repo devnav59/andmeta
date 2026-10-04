@@ -23,6 +23,7 @@ import com.example.R
 import com.example.repository.TradingRepository
 import com.example.ui.overlay.FloatingBubbleView
 import com.example.ui.overlay.FloatingPanelWindow
+import com.example.ui.overlay.FloatingScannerTargetBox
 import com.example.ui.theme.MyApplicationTheme
 import kotlin.math.hypot
 
@@ -31,20 +32,27 @@ class FloatingBubbleService : Service() {
     private lateinit var windowManager: WindowManager
     private val bubbleLifecycleOwner = ServiceLifecycleOwner()
     private val panelLifecycleOwner = ServiceLifecycleOwner()
+    private val scannerLifecycleOwner = ServiceLifecycleOwner()
 
     private var bubbleView: ComposeView? = null
     private var panelView: ComposeView? = null
+    private var scannerView: ComposeView? = null
 
     private lateinit var bubbleParams: WindowManager.LayoutParams
     private lateinit var panelParams: WindowManager.LayoutParams
+    private lateinit var scannerParams: WindowManager.LayoutParams
 
     private var isPanelShowing = false
+    private var isScannerShowing = false
 
     companion object {
         const val CHANNEL_ID = "mt_floating_bubble_channel"
         const val NOTIFICATION_ID = 1010
         const val ACTION_START = "ACTION_START_BUBBLE"
         const val ACTION_STOP = "ACTION_STOP_BUBBLE"
+        const val ACTION_SHOW_SCANNER = "ACTION_SHOW_SCANNER"
+        const val ACTION_HIDE_SCANNER = "ACTION_HIDE_SCANNER"
+        const val ACTION_TOGGLE_SCANNER = "ACTION_TOGGLE_SCANNER"
 
         fun start(context: Context) {
             val intent = Intent(context, FloatingBubbleService::class.java).apply {
@@ -63,6 +71,13 @@ class FloatingBubbleService : Service() {
             }
             context.startService(intent)
         }
+
+        fun toggleScanner(context: Context) {
+            val intent = Intent(context, FloatingBubbleService::class.java).apply {
+                action = ACTION_TOGGLE_SCANNER
+            }
+            context.startService(intent)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -78,17 +93,25 @@ class FloatingBubbleService : Service() {
         bubbleLifecycleOwner.handleOnResume()
         panelLifecycleOwner.handleOnStart()
         panelLifecycleOwner.handleOnResume()
+        scannerLifecycleOwner.handleOnStart()
+        scannerLifecycleOwner.handleOnResume()
 
         if (Settings.canDrawOverlays(this)) {
             initBubbleView()
             initPanelView()
+            initScannerView()
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_SHOW_SCANNER -> showScannerTarget()
+            ACTION_HIDE_SCANNER -> hideScannerTarget()
+            ACTION_TOGGLE_SCANNER -> toggleScannerTarget()
         }
         return START_STICKY
     }
@@ -234,11 +257,111 @@ class FloatingBubbleService : Service() {
                             if (panelView?.isAttachedToWindow == true) {
                                 windowManager.updateViewLayout(panelView, panelParams)
                             }
+                        },
+                        onToggleScannerTarget = { toggleScannerTarget() }
+                    )
+                }
+            }
+        }
+    }
+
+    private fun initScannerView() {
+        val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
+        val initialW = dpToPx(130)
+        val initialH = dpToPx(70)
+
+        scannerParams = WindowManager.LayoutParams(
+            initialW,
+            initialH,
+            overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = dpToPx(30)
+            y = dpToPx(120)
+        }
+
+        ScreenScannerManager.updateTargetPosition(scannerParams.x, scannerParams.y, initialW, initialH)
+
+        scannerView = ComposeView(this).apply {
+            scannerLifecycleOwner.attachTo(this)
+            setContent {
+                MyApplicationTheme {
+                    FloatingScannerTargetBox(
+                        onClose = { hideScannerTarget() },
+                        onDragDelta = { dx, dy ->
+                            val dm = resources.displayMetrics
+                            scannerParams.x = (scannerParams.x + dx.toInt()).coerceIn(0, dm.widthPixels - dpToPx(40))
+                            scannerParams.y = (scannerParams.y + dy.toInt()).coerceIn(0, dm.heightPixels - dpToPx(30))
+                            if (scannerView?.isAttachedToWindow == true) {
+                                windowManager.updateViewLayout(scannerView, scannerParams)
+                            }
+                            ScreenScannerManager.updateTargetPosition(
+                                scannerParams.x,
+                                scannerParams.y,
+                                scannerParams.width,
+                                scannerParams.height
+                            )
+                        },
+                        onResizeDelta = { dw, dh ->
+                            val dm = resources.displayMetrics
+                            val newW = (scannerParams.width + dw.toInt()).coerceIn(dpToPx(70), dm.widthPixels)
+                            val newH = (scannerParams.height + dh.toInt()).coerceIn(dpToPx(40), dm.heightPixels)
+                            scannerParams.width = newW
+                            scannerParams.height = newH
+                            if (scannerView?.isAttachedToWindow == true) {
+                                windowManager.updateViewLayout(scannerView, scannerParams)
+                            }
+                            ScreenScannerManager.updateTargetPosition(
+                                scannerParams.x,
+                                scannerParams.y,
+                                scannerParams.width,
+                                scannerParams.height
+                            )
                         }
                     )
                 }
             }
         }
+    }
+
+    private fun toggleScannerTarget() {
+        if (isScannerShowing) {
+            hideScannerTarget()
+        } else {
+            showScannerTarget()
+        }
+    }
+
+    private fun showScannerTarget() {
+        if (isScannerShowing || scannerView == null) return
+        try {
+            windowManager.addView(scannerView, scannerParams)
+            isScannerShowing = true
+            ScreenScannerManager.setTargetBoxVisibility(true)
+            ScreenScannerManager.updateTargetPosition(
+                scannerParams.x,
+                scannerParams.y,
+                scannerParams.width,
+                scannerParams.height
+            )
+        } catch (_: Exception) {}
+    }
+
+    private fun hideScannerTarget() {
+        if (!isScannerShowing || scannerView == null) return
+        try {
+            windowManager.removeView(scannerView)
+            isScannerShowing = false
+            ScreenScannerManager.setTargetBoxVisibility(false)
+        } catch (_: Exception) {}
     }
 
     private fun togglePanel() {
@@ -322,9 +445,14 @@ class FloatingBubbleService : Service() {
             if (bubbleView != null) {
                 windowManager.removeView(bubbleView)
             }
+            if (isScannerShowing && scannerView != null) {
+                windowManager.removeView(scannerView)
+            }
         } catch (_: Exception) {}
 
         bubbleLifecycleOwner.handleOnDestroy()
         panelLifecycleOwner.handleOnDestroy()
+        scannerLifecycleOwner.handleOnDestroy()
+        ScreenScannerManager.release()
     }
 }

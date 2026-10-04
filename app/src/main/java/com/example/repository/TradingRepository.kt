@@ -61,6 +61,25 @@ object TradingRepository {
     private val _logs = MutableStateFlow<List<String>>(listOf("System initialized. Multi-Protocol Server ready."))
     val logs: StateFlow<List<String>> = _logs.asStateFlow()
 
+    // Auto-Trader State for Free TradingView tracking
+    private val _isAutoTraderEnabled = MutableStateFlow(false)
+    val isAutoTraderEnabled: StateFlow<Boolean> = _isAutoTraderEnabled.asStateFlow()
+
+    private val _isNotificationListenerActive = MutableStateFlow(false)
+    val isNotificationListenerActive: StateFlow<Boolean> = _isNotificationListenerActive.asStateFlow()
+
+    private val _autoTradeLot = MutableStateFlow(0.01)
+    val autoTradeLot: StateFlow<Double> = _autoTradeLot.asStateFlow()
+
+    private val _autoTradeSlPips = MutableStateFlow(0.0)
+    val autoTradeSlPips: StateFlow<Double> = _autoTradeSlPips.asStateFlow()
+
+    private val _autoTradeTpPips = MutableStateFlow(0.0)
+    val autoTradeTpPips: StateFlow<Double> = _autoTradeTpPips.asStateFlow()
+
+    private val _autoTradeLogs = MutableStateFlow<List<String>>(listOf("Auto-Trader standby. Enable when ready."))
+    val autoTradeLogs: StateFlow<List<String>> = _autoTradeLogs.asStateFlow()
+
     val connectionStatus: StateFlow<ConnectionStatus> = combine(
         _isSimulationMode,
         wsClient.status,
@@ -324,6 +343,77 @@ object TradingRepository {
 
     fun appendExternalLog(msg: String) {
         appendLog(msg)
+    }
+
+    fun setAutoTraderEnabled(enabled: Boolean) {
+        _isAutoTraderEnabled.value = enabled
+        appendAutoTradeLog(if (enabled) "🟢 Auto-Trader ENABLED" else "🔴 Auto-Trader DISABLED")
+    }
+
+    fun setNotificationListenerActive(active: Boolean) {
+        _isNotificationListenerActive.value = active
+    }
+
+    fun setAutoTradeLot(lot: Double) {
+        _autoTradeLot.value = lot.coerceAtLeast(0.01)
+    }
+
+    fun setAutoTradeSlPips(sl: Double) {
+        _autoTradeSlPips.value = sl.coerceAtLeast(0.0)
+    }
+
+    fun setAutoTradeTpPips(tp: Double) {
+        _autoTradeTpPips.value = tp.coerceAtLeast(0.0)
+    }
+
+    fun appendAutoTradeLog(msg: String) {
+        val timestamp = timeFormat.format(Date())
+        val entry = "[$timestamp] $msg"
+        val current = _autoTradeLogs.value.toMutableList()
+        current.add(0, entry)
+        if (current.size > 50) current.removeAt(current.size - 1)
+        _autoTradeLogs.value = current
+        appendLog("[AutoTrader] $msg")
+    }
+
+    fun processAutoTradeSignal(signalRaw: String, source: String = "TradingView") {
+        val upper = signalRaw.uppercase()
+        if (!_isAutoTraderEnabled.value) {
+            appendAutoTradeLog("[$source] Signal received but ignored (Auto-Trader is OFF): $signalRaw")
+            return
+        }
+
+        appendAutoTradeLog("[$source] Processing signal: $signalRaw")
+
+        when {
+            upper.contains("CLOSE_BUY") || upper.contains("CLOSE_SELL") || upper.contains("CLOSE ALL") || upper.contains("CLOSE") -> {
+                closeAllPositions()
+                appendAutoTradeLog("⚡ [ACTION] Closed All Positions on MetaTrader")
+            }
+            upper.contains("BUY") -> {
+                openOrder(
+                    symbol = "", // Uses active chart on MetaTrader
+                    type = OrderType.BUY,
+                    volume = _autoTradeLot.value,
+                    slPips = _autoTradeSlPips.value,
+                    tpPips = _autoTradeTpPips.value
+                )
+                appendAutoTradeLog("⚡ [ACTION] Opened BUY ${_autoTradeLot.value} Lot (SL: ${_autoTradeSlPips.value}p | TP: ${_autoTradeTpPips.value}p)")
+            }
+            upper.contains("SELL") -> {
+                openOrder(
+                    symbol = "", // Uses active chart on MetaTrader
+                    type = OrderType.SELL,
+                    volume = _autoTradeLot.value,
+                    slPips = _autoTradeSlPips.value,
+                    tpPips = _autoTradeTpPips.value
+                )
+                appendAutoTradeLog("⚡ [ACTION] Opened SELL ${_autoTradeLot.value} Lot (SL: ${_autoTradeSlPips.value}p | TP: ${_autoTradeTpPips.value}p)")
+            }
+            else -> {
+                appendAutoTradeLog("ℹ️ [INFO] Unrecognized signal text: $signalRaw")
+            }
+        }
     }
 
     private fun appendLog(msg: String) {

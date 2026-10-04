@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.TrackChanges
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -168,7 +169,8 @@ fun FloatingPanelWindow(
     onOpenFullApp: () -> Unit,
     onDragDelta: (Float, Float) -> Unit = { _, _ -> },
     onResizeDelta: (Float, Float) -> Unit = { _, _ -> },
-    onToggleSizePreset: (Int) -> Unit = {}
+    onToggleSizePreset: (Int) -> Unit = {},
+    onToggleScannerTarget: () -> Unit = {}
 ) {
     val status by TradingRepository.connectionStatus.collectAsState()
     val stats by TradingRepository.stats.collectAsState()
@@ -286,8 +288,21 @@ fun FloatingPanelWindow(
                         }
                     }
 
-                    // Right: Size presets, Open full app, Minimize, Close
+                    // Right: Target scanner, Size presets, Open full app, Minimize, Close
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Toggle Floating Target Scanner Box
+                        IconButton(
+                            onClick = onToggleScannerTarget,
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.TrackChanges,
+                                contentDescription = "Scanner Target Box",
+                                tint = GoldAccent,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+
                         // Toggle Size Preset (S / M / L)
                         IconButton(
                             onClick = {

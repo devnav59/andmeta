@@ -1,0 +1,1584 @@
+//@version=6
+// ══════════════════════════════════════════════════════════════════════════
+// ✌️ R strategy final — R breakout / reversal system (Pine v6)
+// Enhanced with AUTO-TRADE Signal Row for Free TradingView Plan
+// ══════════════════════════════════════════════════════════════════════════
+
+indicator("✌️ p1 strategy fix break v4", overlay=true, precision=5, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 1 — UDTs & METHODS
+// ══════════════════════════════════════════════════════════════════════════
+
+type RenkoBar
+    float rc = na
+    float ro = na
+    float vol = na
+
+type SignalEngine
+    int  lStrk = 0
+    int  sStrk = 0
+    bool isBull = false
+    bool isBear = false
+    bool buyF = false
+    bool sellF = false
+    bool isChoCh = false
+    float entryPrice = na
+
+method updateSignals(SignalEngine this, float rcConf, float roConf, bool mtfBull, bool mtfBear, bool inKz, int recentSweep) =>
+    this.isBull := rcConf > roConf
+    this.isBear := rcConf < roConf
+    this.lStrk := this.isBull ? this.lStrk + 1 : 0
+    this.sStrk := this.isBear ? this.sStrk + 1 : 0
+    this.buyF := this.lStrk == 1 and mtfBull and inKz
+    this.sellF := this.sStrk == 1 and mtfBear and inKz
+    this.isChoCh := (this.buyF and recentSweep == -1) or (this.sellF and recentSweep == 1)
+    this.entryPrice := rcConf
+
+type RenkoEngine
+    float level   = na
+    float openLvl = na
+    int   dir     = 0
+    float volAcc  = 0.0
+    int   lastBar = -1
+    float rc      = na
+    float ro      = na
+    float vol     = 0.0
+
+method feed(RenkoEngine this, float p, float v, float box) =>
+    if not na(p) and not na(box) and box > 0
+        if na(this.level)
+            this.level   := p
+            this.openLvl := p
+            this.dir     := 0
+            this.volAcc  := 0.0
+            this.rc      := p
+            this.ro      := p
+            this.vol     := nz(v, 0.0)
+        else
+            this.volAcc += nz(v, 0.0)
+            bool _moved = false
+            if this.dir >= 0
+                if p >= this.level + box
+                    int _g = 0
+                    while p >= this.level + box and _g < 200
+                        this.openLvl := this.level
+                        this.level   := this.level + box
+                        this.dir     := 1
+                        _moved       := true
+                        _g           += 1
+                else
+                    float _rev = this.dir == 0 ? this.level - box : this.level - 2.0 * box
+                    if p <= _rev
+                        int _g2 = 0
+                        while p <= this.level - box and _g2 < 200
+                            this.openLvl := this.level
+                            this.level   := this.level - box
+                            this.dir     := -1
+                            _moved       := true
+                            _g2          += 1
+            else
+                if p <= this.level - box
+                    int _g3 = 0
+                    while p <= this.level - box and _g3 < 200
+                        this.openLvl := this.level
+                        this.level   := this.level - box
+                        this.dir     := -1
+                        _moved       := true
+                        _g3          += 1
+                else if p >= this.level + 2.0 * box
+                    int _g4 = 0
+                    while p >= this.level + box and _g4 < 200
+                        this.openLvl := this.level
+                        this.level   := this.level + box
+                        this.dir     := 1
+                        _moved       := true
+                        _g4          += 1
+            if _moved
+                this.vol    := this.volAcc
+                this.volAcc := 0.0
+            this.rc := this.level
+            this.ro := this.openLvl
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 2 — PURE FUNCTIONS
+// ══════════════════════════════════════════════════════════════════════════
+
+f_color(int streak, color cA, color cB, int gd, bool highVol, bool exhausted) =>
+    float t = math.min(streak / float(gd), 1.0)
+    int   a = math.max(highVol ? 5 : 40, 50 - streak * 4)
+    if exhausted
+        a := 85
+    color.new(color.from_gradient(t, 0.0, 1.0, cA, cB), a)
+
+f_fmt(float v) =>
+    str.tostring(v, format.mintick)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 3 — INPUTS
+// ══════════════════════════════════════════════════════════════════════════
+
+float  i_atrLen        = input.float(10.0,     "ATR Length",               minval=1, maxval=100, step=1, group="◈ Renko")
+int    i_mult          = input.int(1,          "ATR Resolution ×",         minval=1,                     group="◈ Renko")
+bool   i_useFixedBox   = input.bool(true,     "Enable Fixed Renko Height",                               group="◈ Renko")
+float  i_fixedBoxSize  = input.float(1,    "Fixed Renko Height",       minval=0.00001, step=0.00001, group="◈ Renko")
+float  i_renkoOffset  = input.float(0.0, "Renko Offset (Distance From Candles)", minval=0.0, step=0.00001, group="◈ Renko")
+
+color  i_cBullA        = input.color(color.green,  "Bull → Start",             group="◈ Visuals")
+color  i_cBullB        = input.color(color.green,  "Bull → End",               group="◈ Visuals")
+color  i_cBearA        = input.color(color.red,  "Bear → Start",             group="◈ Visuals")
+color  i_cBearB        = input.color(color.red,  "Bear → End",               group="◈ Visuals")
+int    i_gDepth        = input.int(1,         "Gradient Streak Depth",    minval=1, maxval=50,         group="◈ Visuals")
+
+bool   i_enableLongs   = input.bool(true,      "Enable Buy Trades",                                        group="◈ Strategy")
+bool   i_enableShorts  = input.bool(true,      "Enable Sell Trades",                                       group="◈ Strategy")
+float  i_initialCapital= input.float(1000.0,    "Initial Capital",          minval=0.01, step=0.01,       group="◈ Strategy")
+float  i_marginCallPct = input.float(20.0,     "Margin Call %",            minval=0.0,  maxval=100.0,    group="◈ Strategy")
+float  i_qty           = input.float(10.0,      "Position Size",            minval=0.01, step=0.01,       group="◈ Strategy")
+bool   i_useCustomSL   = input.bool(true,     "Enable Manual Stop Loss",                                  group="◈ Strategy")
+float  i_manualSL      = input.float(2.0,      "Manual Stop Distance",     minval=0.00001, step=0.00001, group="◈ Strategy")
+bool   i_useCustomTP   = input.bool(true,     "Enable Manual Take Profit",                                group="◈ Strategy")
+float  i_manualTP      = input.float(2.0,      "Manual TP Distance",       minval=0.00001, step=0.00001, group="◈ Strategy")
+bool   i_usePrevFilter = input.bool(true,      "Enable Previous Candle Filter",                            group="◈ Strategy")
+
+bool   i_useNewLogic   = input.bool(false,   "Enable New Entry Logic",                                     group="◈ New Entry Logic")
+float  i_revOffsetPips = input.float(1.0,    "Entry Offset (Pips)",              minval=0.0, step=0.1,      group="◈ New Entry Logic")
+float  i_revSL         = input.float(1.5,    "Stop Loss Distance",               minval=0.00001, step=0.00001, group="◈ New Entry Logic")
+float  i_revTP         = input.float(1.5,    "Take Profit Distance",             minval=0.00001, step=0.00001, group="◈ New Entry Logic")
+bool   i_showNewLogic  = input.bool(false,    "Show New Entry Logic (Renko Break)",                         group="◈ New Entry Logic")
+
+bool  i_useHoldMode   = input.bool(false, "Enable Hold-Until-Opposite Mode", group="◈ Hold Mode")
+
+bool   i_useDayFilter      = input.bool(false,      "Enable Specific Day Filter",                           group="◈ Filter")
+int    i_daysBack          = input.int(0,           "Days Back (0 = Today)",    minval=0, maxval=365,     group="◈ Filter")
+string i_filterTimezone    = input.string("GMT+0330", "Filter / Market Timezone",                         group="◈ Filter")
+int    i_marketOpenHour    = input.int(1,           "Market Open Hour",          minval=1, maxval=12,      group="◈ Filter")
+int    i_marketOpenMinute  = input.int(29,           "Market Open Minute",        minval=0, maxval=59,      group="◈ Filter")
+string i_marketOpenMeridiem= input.string("AM",    "Market Open AM / PM",      options=["AM", "PM"],    group="◈ Filter")
+int    i_marketCloseHour   = input.int(12,           "Market Close Hour",         minval=1, maxval=12,      group="◈ Filter")
+int    i_marketCloseMinute = input.int(29,           "Market Close Minute",       minval=0, maxval=59,      group="◈ Filter")
+string i_marketCloseMeridiem=input.string("AM",    "Market Close AM / PM",     options=["AM", "PM"],    group="◈ Filter")
+bool   i_useTimeFilter     = input.bool(false,      "Enable Start Time Filter",                             group="◈ Filter")
+int    i_filterHour        = input.int(10,          "Start Hour",                minval=1, maxval=12,      group="◈ Filter")
+int    i_filterMinute      = input.int(0,           "Start Minute",              minval=0, maxval=59,      group="◈ Filter")
+string i_filterMeridiem    = input.string("AM",    "Start AM / PM",             options=["AM", "PM"],    group="◈ Filter")
+bool   i_closeAtDayEnd     = input.bool(true,       "Force Close At End Of Selected Day",                  group="◈ Filter")
+
+bool   i_useNoTradeWindow  = input.bool(true,      "Enable Daily No-Trade Window",                        group="◈ Daily Block")
+int    i_noTradeStartHour  = input.int(1,          "No-Trade Start Hour",        minval=1, maxval=12,     group="◈ Daily Block")
+int    i_noTradeStartMinute= input.int(29,           "No-Trade Start Minute",      minval=0, maxval=59,     group="◈ Daily Block")
+string i_noTradeStartMeridiem=input.string("AM",   "No-Trade Start AM / PM",     options=["AM", "PM"],   group="◈ Daily Block")
+int    i_noTradeEndHour    = input.int(8,           "No-Trade End Hour",          minval=1, maxval=12,     group="◈ Daily Block")
+int    i_noTradeEndMinute  = input.int(30,           "No-Trade End Minute",        minval=0, maxval=59,     group="◈ Daily Block")
+string i_noTradeEndMeridiem= input.string("AM",    "No-Trade End AM / PM",       options=["AM", "PM"],   group="◈ Daily Block")
+
+bool   i_showRenko       = input.bool(true,      "Show Renko Boxes",                                         group="◈ Display")
+bool   i_showLastBox     = input.bool(true,      "Show Last Renko Brick Box",                                group="◈ Display")
+bool   i_showLevels      = input.bool(true,      "Enable Position Box",                                      group="◈ Display")
+bool   i_showFill        = input.bool(true,      "Show Closed Risk / Reward Fill",                           group="◈ Display")
+bool   i_showOpenFill    = input.bool(true,      "Show Open Position Risk / Reward Fill",                    group="◈ Display")
+color  i_riskFillColor   = input.color(color.red, "Risk Fill Color",                                          group="◈ Display")
+int    i_riskFillTransp  = input.int(50,         "Risk Fill Transparency", minval=0, maxval=100,            group="◈ Display")
+color  i_rewardFillColor = input.color(color.lime, "Reward Fill Color",                                      group="◈ Display")
+int    i_rewardFillTransp= input.int(50,         "Reward Fill Transparency", minval=0, maxval=100,          group="◈ Display")
+bool   i_showSignals     = input.bool(true,      "Show BUY / SELL Markers",                                  group="◈ Display")
+color  i_markerTpColor   = input.color(color.lime, "Marker Color — Trade Hit TP",                             group="◈ Display")
+color  i_markerSlColor   = input.color(color.red,  "Marker Color — Trade Hit SL",                             group="◈ Display")
+color  i_markerPendColor = input.color(color.gray, "Marker Color — Trade Still Open",                         group="◈ Display")
+bool   i_showLabels      = input.bool(false,      "Show Unified Trade Label",                                 group="◈ Display")
+bool   i_showTpGuides    = input.bool(true,      "Show Continuous TP Guide Lines",                           group="◈ Display")
+color  i_buyTpColor      = input.color(color.blue, "Buy TP Line Color",                                          group="◈ Display")
+color  i_sellTpColor     = input.color(color.blue, "Sell TP Line Color",                                         group="◈ Display")
+bool   i_showPriceTags   = input.bool(true,      "Show Renko / TP Price Tags",                               group="◈ Display")
+bool   i_showProj        = input.bool(true,       "Show Projection Steps (Yellow)",                            group="◈ Display")
+bool   i_showStatsTbl    = input.bool(false,      "Show Trade Stats Table",                                   group="◈ Display")
+bool   i_showPending     = input.bool(true,      "Show Pending Order Row",                                   group="◈ Display")
+bool   i_showMtfRows     = input.bool(true,      "Show MTF Osc Rows (Values + Dots)",                        group="◈ Display")
+
+bool   show_candle_matrix = input.bool(true,  "1. Candle Matrix & OB/OS On/Off",  group="◈ Add-Ons On/Off")
+bool   show_smc           = input.bool(true, "2. Smart Money (SMC Lite) On/Off", group="◈ Add-Ons On/Off")
+bool   show_gaussian      = input.bool(true, "3. Gaussian Filter On/Off",        group="◈ Add-Ons On/Off")
+
+bool   i_rash = input.bool(false, "rash", group="◈ Activation")
+int    i_min  = input.int(0,       "min",  minval=0, group="◈ Activation")
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 4 — ACTIVATION + CORE DATA FETCHING
+// ══════════════════════════════════════════════════════════════════════════
+
+bool  _activated         = i_rash and i_min == 1371
+float _effInitialCapital = _activated ? i_initialCapital : 10.0
+float _effQty            = _activated ? i_qty : 100.0
+
+string _res = timeframe.ismonthly ? str.tostring(timeframe.multiplier * i_mult, "###M") : timeframe.isweekly ? str.tostring(timeframe.multiplier * i_mult, "###W") : timeframe.isdaily ? str.tostring(timeframe.multiplier * i_mult, "###D") : timeframe.isintraday ? str.tostring(timeframe.multiplier * i_mult, "####") : "1D"
+
+bool _finalBar = barstate.isconfirmed or not barstate.islast
+
+float _htfClose = request.security(syminfo.tickerid, _res, close[1],  lookahead=barmerge.lookahead_on)
+float _htfVol   = request.security(syminfo.tickerid, _res, volume[1], lookahead=barmerge.lookahead_on)
+float _srcPrice = i_mult == 1 ? nz(close[1], close)   : _htfClose
+float _srcVol   = i_mult == 1 ? nz(volume[1], volume) : _htfVol
+float _boxCalc  = i_useFixedBox ? i_fixedBoxSize : ta.atr(int(math.max(1.0, i_atrLen)))
+bool  _boxOk    = not na(_boxCalc) and _boxCalc > 0
+float _boxSafe  = _boxOk ? _boxCalc : syminfo.mintick
+
+var RenkoEngine _rk = RenkoEngine.new()
+if _finalBar
+    int _gap = bar_index - _rk.lastBar
+    if _gap > 1
+        for _k = _gap - 1 to 1
+            if _boxOk[_k]
+                _rk.feed(_srcPrice[_k], _srcVol[_k], _boxSafe[_k])
+    if _boxOk
+        _rk.feed(_srcPrice, _srcVol, _boxSafe)
+    _rk.lastBar := bar_index
+
+float _rkRcConf = _rk.rc
+float _rkRoConf = _rk.ro
+float _rkVol    = _rk.vol
+
+var float _gateRcConf = na
+var float _gateRoConf = na
+var float _gateVol    = na
+
+int _gatePrevDir = not na(_gateRcConf[1]) and not na(_gateRoConf[1]) ? (_gateRcConf[1] > _gateRoConf[1] ? 1 : _gateRcConf[1] < _gateRoConf[1] ? -1 : 0) : 0
+int _rawDirNow   = not na(_rkRcConf) and not na(_rkRoConf) ? (_rkRcConf > _rkRoConf ? 1 : _rkRcConf < _rkRoConf ? -1 : 0) : 0
+
+float _gateUpperPrev = na
+float _gateLowerPrev = na
+if not na(_gateRcConf[1]) and not na(_gateRoConf[1])
+    float _gateRawUpperPrev = math.max(_gateRcConf[1], _gateRoConf[1])
+    float _gateRawLowerPrev = math.min(_gateRcConf[1], _gateRoConf[1])
+    float _gateOffShiftPrev = _gatePrevDir == 1 ? -i_renkoOffset : _gatePrevDir == -1 ? i_renkoOffset : 0.0
+    _gateUpperPrev := _gateRawUpperPrev + _gateOffShiftPrev
+    _gateLowerPrev := _gateRawLowerPrev + _gateOffShiftPrev
+
+bool _gateBearBreak = _gatePrevDir == 1 and _rawDirNow == -1 and not na(_gateLowerPrev) and _srcPrice < _gateLowerPrev
+bool _gateBullBreak = _gatePrevDir == -1 and _rawDirNow == 1 and not na(_gateUpperPrev) and _srcPrice > _gateUpperPrev
+bool _gateAcceptRaw = na(_gateRcConf[1]) or _gatePrevDir == 0 or _rawDirNow == 0 or _rawDirNow == _gatePrevDir or _gateBearBreak or _gateBullBreak
+
+_gateRcConf := _gateAcceptRaw ? _rkRcConf : nz(_gateRcConf[1], _rkRcConf)
+_gateRoConf := _gateAcceptRaw ? _rkRoConf : nz(_gateRoConf[1], _rkRoConf)
+_gateVol    := _gateAcceptRaw ? _rkVol    : nz(_gateVol[1], _rkVol)
+
+var RenkoBar _bar = RenkoBar.new()
+_bar.rc  := _gateRcConf
+_bar.ro  := _gateRoConf
+_bar.vol := _gateVol
+
+float _rcConf     = _bar.rc
+float _roConf     = _bar.ro
+float _volMa      = ta.sma(_bar.vol, 20)
+bool  _highVol    = _bar.vol > _volMa
+
+bool  _boxChanged = _rcConf != _rcConf[1] or _roConf != _roConf[1]
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 5 — EDGE-ERA TRACKING
+// ══════════════════════════════════════════════════════════════════════════
+
+var int   _boxStartBar   = 0
+var int   _boxStartTime  = na
+if _boxChanged
+    _boxStartBar   := bar_index
+    _boxStartTime  := time
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 6 — TREND ENGINE
+// ══════════════════════════════════════════════════════════════════════════
+
+bool _mtfBull = true
+bool _mtfBear = true
+bool _inKz    = true
+var int _recentSweepState = 0
+
+var SignalEngine _engine = SignalEngine.new()
+_engine.updateSignals(_rcConf, _roConf, _mtfBull, _mtfBear, _inKz, _recentSweepState)
+
+if _engine.buyF or _engine.sellF
+    _recentSweepState := 0
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 7 — STREAK EXHAUSTION
+// ══════════════════════════════════════════════════════════════════════════
+
+var array<int> _streakHist = array.new<int>()
+var bool _isExhausted = false
+
+int _prevLStrk = bar_index > 0 and not na(_engine[1]) ? (_engine[1]).lStrk : 0
+int _prevSStrk = bar_index > 0 and not na(_engine[1]) ? (_engine[1]).sStrk : 0
+if _boxChanged and _engine.lStrk == 0 and _prevLStrk > 2
+    array.push(_streakHist, _prevLStrk)
+if _boxChanged and _engine.sStrk == 0 and _prevSStrk > 2
+    array.push(_streakHist, _prevSStrk)
+
+int _histSz = array.size(_streakHist)
+if _histSz > 30
+    array.shift(_streakHist)
+    _histSz := array.size(_streakHist)
+
+_isExhausted := false
+if _histSz >= 5
+    float _meanStrk = array.avg(_streakHist)
+    float _stdStrk  = array.stdev(_streakHist)
+    if _stdStrk > 0
+        if _engine.isBull
+            _isExhausted := (_engine.lStrk - _meanStrk) / _stdStrk > 2.0
+        else if _engine.isBear
+            _isExhausted := (_engine.sStrk - _meanStrk) / _stdStrk > 2.0
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 8 — VISUALS
+// ══════════════════════════════════════════════════════════════════════════
+
+float _gradT = _engine.isBull ? math.min(_engine.lStrk / float(i_gDepth), 1.0) : _engine.isBear ? math.min(_engine.sStrk / float(i_gDepth), 1.0) : 0.0
+
+color _base = _engine.isBull ? color.from_gradient(_gradT, 0.0, 1.0, i_cBullA, i_cBullB) : _engine.isBear ? color.from_gradient(_gradT, 0.0, 1.0, i_cBearA, i_cBearB) : color.gray
+if _isExhausted
+    _base := color.new(_base, 75)
+
+color _core = _engine.isBull ? f_color(_engine.lStrk, i_cBullA, i_cBullB, i_gDepth, _highVol, _isExhausted) : _engine.isBear ? f_color(_engine.sStrk, i_cBearA, i_cBearB, i_gDepth, _highVol, _isExhausted) : color.new(color.gray, 50)
+
+float _rawUpper   = math.max(_rcConf, _roConf)
+float _rawLower   = math.min(_rcConf, _roConf)
+float _offShift   = na(_rawUpper) or na(_rawLower) ? 0.0 : _engine.isBull ? -i_renkoOffset : _engine.isBear ? i_renkoOffset : 0.0
+float _upper      = _rawUpper + _offShift
+float _lower      = _rawLower + _offShift
+float _avg        = (_upper + _lower) / 2.0
+bool  _isReversed = _engine.buyF or _engine.sellF
+color _boxColor   = _core
+float _boxSize    = math.abs(_upper - _lower)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SESSION CLOCK
+// ══════════════════════════════════════════════════════════════════════════
+
+int   _dayMs               = 24 * 60 * 60 * 1000
+int   _marketOpenHour24    = (i_marketOpenHour % 12) + (i_marketOpenMeridiem == "PM" ? 12 : 0)
+int   _marketCloseHour24   = (i_marketCloseHour % 12) + (i_marketCloseMeridiem == "PM" ? 12 : 0)
+int   _filterHour24        = (i_filterHour % 12) + (i_filterMeridiem == "PM" ? 12 : 0)
+int   _noTradeStartHour24  = (i_noTradeStartHour % 12) + (i_noTradeStartMeridiem == "PM" ? 12 : 0)
+int   _noTradeEndHour24    = (i_noTradeEndHour % 12) + (i_noTradeEndMeridiem == "PM" ? 12 : 0)
+int   _marketOpenMins      = _marketOpenHour24 * 60 + i_marketOpenMinute
+int   _marketCloseMins     = _marketCloseHour24 * 60 + i_marketCloseMinute
+int   _filterStartMins     = _filterHour24 * 60 + i_filterMinute
+int   _noTradeStartMins    = _noTradeStartHour24 * 60 + i_noTradeStartMinute
+int   _noTradeEndMins      = _noTradeEndHour24 * 60 + i_noTradeEndMinute
+bool  _marketOvernight     = _marketCloseMins <= _marketOpenMins
+bool  _noTradeOvernight    = _noTradeEndMins <= _noTradeStartMins
+int   _sessionMinutes      = _marketOvernight ? (24 * 60 - _marketOpenMins + _marketCloseMins) : (_marketCloseMins - _marketOpenMins)
+int   _sessionMs           = _sessionMinutes * 60 * 1000
+
+int   _nowYear             = int(str.tonumber(str.format_time(timenow, "yyyy", i_filterTimezone)))
+int   _nowMonth            = int(str.tonumber(str.format_time(timenow, "MM", i_filterTimezone)))
+int   _nowDay              = int(str.tonumber(str.format_time(timenow, "dd", i_filterTimezone)))
+int   _nowHour             = int(str.tonumber(str.format_time(timenow, "HH", i_filterTimezone)))
+int   _nowMinute           = int(str.tonumber(str.format_time(timenow, "mm", i_filterTimezone)))
+int   _nowMins             = _nowHour * 60 + _nowMinute
+
+int   _barYear             = int(str.tonumber(str.format_time(time, "yyyy", i_filterTimezone)))
+int   _barMonth            = int(str.tonumber(str.format_time(time, "MM", i_filterTimezone)))
+int   _barDay              = int(str.tonumber(str.format_time(time, "dd", i_filterTimezone)))
+int   _barHour             = int(str.tonumber(str.format_time(time, "HH", i_filterTimezone)))
+int   _barMinute           = int(str.tonumber(str.format_time(time, "mm", i_filterTimezone)))
+int   _barMins             = _barHour * 60 + _barMinute
+
+int   _currentMarketDayStart = timestamp(i_filterTimezone, _nowYear, _nowMonth, _nowDay, _marketOpenHour24, i_marketOpenMinute)
+_currentMarketDayStart      := _nowMins >= _marketOpenMins ? _currentMarketDayStart : _currentMarketDayStart - _dayMs
+
+int   _barMarketDayStart     = timestamp(i_filterTimezone, _barYear, _barMonth, _barDay, _marketOpenHour24, i_marketOpenMinute)
+_barMarketDayStart          := _barMins >= _marketOpenMins ? _barMarketDayStart : _barMarketDayStart - _dayMs
+
+bool  _barInMarketSession    = _marketOvernight ? (_barMins >= _marketOpenMins or _barMins < _marketCloseMins) : (_barMins >= _marketOpenMins and _barMins < _marketCloseMins)
+
+int   _selectedDayStart      = _currentMarketDayStart - i_daysBack * _dayMs
+int   _selectedDayEnd        = _selectedDayStart + _sessionMs
+
+int   _barSessionEnd         = _barMarketDayStart + _sessionMs
+
+int   _filterOffsetMins      = ((_filterStartMins - _marketOpenMins) % (24 * 60) + (24 * 60)) % (24 * 60)
+int   _filterOffsetMs        = _filterOffsetMins * 60 * 1000
+_filterOffsetMs             := _filterOffsetMs > _sessionMs ? _sessionMs : _filterOffsetMs
+
+bool  _barPassesTimeFilter   = not i_useTimeFilter or (_barInMarketSession and time >= _barMarketDayStart + _filterOffsetMs and time < _barSessionEnd)
+bool  _barPassesDayFilter    = not i_useDayFilter or (_barInMarketSession and _barMarketDayStart == _selectedDayStart and time < _selectedDayEnd)
+
+bool  _barInFilter           = _barPassesDayFilter and _barPassesTimeFilter
+bool  _barInNoTradeWindow    = i_useNoTradeWindow and (_noTradeOvernight ? (_barMins >= _noTradeStartMins or _barMins < _noTradeEndMins) : (_barMins >= _noTradeStartMins and _barMins < _noTradeEndMins))
+
+int  _tdDow   = dayofweek(time, i_filterTimezone)
+bool _tdOpen  = _tdDow != dayofweek.sunday and _tdDow != dayofweek.saturday
+var int _tradingDays = 0
+var int _tdLastKey   = -1
+if _tdOpen
+    int _tdKey = _barYear * 10000 + _barMonth * 100 + _barDay
+    if _tdKey != _tdLastKey
+        _tradingDays += 1
+        _tdLastKey   := _tdKey
+
+plot(_avg, "Renko Mid", color=color.new(_core, 60), style=plot.style_line, linestyle=plot.linestyle_dotted, linewidth=1, display=(i_showRenko and _activated) ? display.all : display.none)
+plot(_isReversed ? close : na, "Reversal Close", color=_core, style=plot.style_circles, linewidth=3, display=(i_showRenko and _activated) ? display.all : display.none)
+
+pC = plot(_upper, "Renko Upper", color=_boxColor, style=plot.style_stepline, linewidth=2, display=(i_showRenko and _activated) ? display.all : display.none)
+pO = plot(_lower, "Renko Lower", color=_boxColor, style=plot.style_stepline, linewidth=2, display=(i_showRenko and _activated) ? display.all : display.none)
+fill(pC, pO, color=(i_showRenko and _activated) ? color.new(_base, 84) : na, title="OC Core Zone")
+
+var box _lastRenkoBox = na
+bool _lastBoxOk  = not na(_upper) and not na(_lower) and not na(_boxStartTime)
+bool _lastBoxVis = _activated and i_showLastBox and _lastBoxOk
+int  _lastBoxL   = math.min(_boxStartBar, bar_index)
+int  _lastBoxR   = bar_index + 2
+if _lastBoxVis
+    if _boxChanged or na(_lastRenkoBox)
+        if not na(_lastRenkoBox)
+            box.delete(_lastRenkoBox)
+            _lastRenkoBox := na
+        _lastRenkoBox := box.new(_lastBoxL, _upper, _lastBoxR, _lower, xloc=xloc.bar_index, bgcolor=color.new(_base, 84), border_color=_boxColor, border_width=2)
+    else
+        box.set_left(_lastRenkoBox, _lastBoxL)
+        box.set_right(_lastRenkoBox, _lastBoxR)
+        box.set_top(_lastRenkoBox, _upper)
+        box.set_bottom(_lastRenkoBox, _lower)
+        box.set_bgcolor(_lastRenkoBox, color.new(_base, 84))
+        box.set_border_color(_lastRenkoBox, _boxColor)
+else if not na(_lastRenkoBox)
+    box.delete(_lastRenkoBox)
+    _lastRenkoBox := na
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 9 — TRADE ENGINE
+// ══════════════════════════════════════════════════════════════════════════
+
+bool  _validBox      = not na(_boxSize) and _boxSize > 0
+bool  _candleEligible  = bar_index > _boxStartBar
+bool  _edgeEraOk       = _candleEligible
+bool  _touchUpper    = _validBox and _edgeEraOk and high >= _upper and low <= _upper
+bool  _touchLower    = _validBox and _edgeEraOk and high >= _lower and low <= _lower
+bool  _prevLongOk    = not na(close[1]) and not na(_upper[1]) and close[1] > _upper[1]
+bool  _prevShortOk   = not na(close[1]) and not na(_lower[1]) and close[1] < _lower[1]
+
+float _pip         = syminfo.mintick * 10.0
+float _revOffset   = i_revOffsetPips * _pip
+bool  _prevIsBear  = bar_index > 0 and not na(_engine[1]) ? (_engine[1]).isBear : false
+bool  _prevIsBull  = bar_index > 0 and not na(_engine[1]) ? (_engine[1]).isBull : false
+bool  _revSigLong  = bar_index > 1 and _prevIsBear and not na(_upper[1]) and close[1] > _upper[1]
+bool  _revSigShort = bar_index > 1 and _prevIsBull and not na(_lower[1]) and close[1] < _lower[1]
+
+var bool  _revPendArmed = false
+var int   _revPendDir   = 0
+var float _revPendPrice = na
+
+bool  _defLong   = _engine.isBull and _touchUpper and (not i_usePrevFilter or _prevLongOk)
+bool  _defShort  = _engine.isBear and _touchLower and (not i_usePrevFilter or _prevShortOk)
+bool  _pendLong  = _engine.isBull and (not i_usePrevFilter or _prevLongOk)
+bool  _pendShort = _engine.isBear and (not i_usePrevFilter or _prevShortOk)
+
+float _slDistanceRaw = i_useCustomSL ? i_manualSL : _boxSize
+float _tpDistanceRaw = i_useCustomTP ? i_manualTP : _slDistanceRaw * 2.0
+float _buyTpGuide    = _upper + _tpDistanceRaw
+float _sellTpGuide   = _lower - _tpDistanceRaw
+float _labelOffset   = math.max(_boxSize * 0.85, nz(ta.atr(14), _boxSize) * 0.35)
+bool  _fillVis       = _activated and i_showLevels and i_showFill
+bool  _openFillVis   = _activated and i_showLevels and i_showOpenFill
+
+plot(_activated and i_showTpGuides and i_enableLongs  ? _buyTpGuide  : na, "Buy TP Guide",  color=color.new(i_buyTpColor, 20),  style=plot.style_stepline, linewidth=1)
+plot(_activated and i_showTpGuides and i_enableShorts ? _sellTpGuide : na, "Sell TP Guide", color=color.new(i_sellTpColor, 20), style=plot.style_stepline, linewidth=1)
+
+var box _projBox1 = na
+var box _projBox2 = na
+float _p1Top = na
+float _p1Bot = na
+float _p2Top = na
+float _p2Bot = na
+if _engine.isBull
+    _p1Top := _upper + _boxSize
+    _p1Bot := _upper
+    _p2Top := _upper + 2.0 * _boxSize
+    _p2Bot := _upper + _boxSize
+else if _engine.isBear
+    _p1Top := _lower
+    _p1Bot := _lower - _boxSize
+    _p2Top := _lower - _boxSize
+    _p2Bot := _lower - 2.0 * _boxSize
+
+bool _projVisible = _activated and i_showRenko and i_showProj and (_engine.isBull or _engine.isBear) and _validBox
+int  _projLeft    = bar_index + 1
+int  _projRight   = bar_index + 3
+if _projVisible
+    if na(_projBox1)
+        _projBox1 := box.new(_projLeft, _p1Top, _projRight, _p1Bot, xloc=xloc.bar_index, bgcolor=color.new(color.yellow, 70), border_color=color.yellow, border_width=1)
+        _projBox2 := box.new(_projLeft, _p2Top, _projRight, _p2Bot, xloc=xloc.bar_index, bgcolor=color.new(color.yellow, 70), border_color=color.yellow, border_width=1)
+    else
+        box.set_left(_projBox1, _projLeft)
+        box.set_right(_projBox1, _projRight)
+        box.set_top(_projBox1, _p1Top)
+        box.set_bottom(_projBox1, _p1Bot)
+        box.set_bgcolor(_projBox1, color.new(color.yellow, 70))
+        box.set_border_color(_projBox1, color.yellow)
+        box.set_left(_projBox2, _projLeft)
+        box.set_right(_projBox2, _projRight)
+        box.set_top(_projBox2, _p2Top)
+        box.set_bottom(_projBox2, _p2Bot)
+        box.set_bgcolor(_projBox2, color.new(color.yellow, 70))
+        box.set_border_color(_projBox2, color.yellow)
+else if not na(_projBox1)
+    box.set_bgcolor(_projBox1, na)
+    box.set_border_color(_projBox1, na)
+    box.set_bgcolor(_projBox2, na)
+    box.set_border_color(_projBox2, na)
+
+var bool  _inTrade      = false
+var int   _tradeDir     = 0
+var float _tradeEntry   = na
+var float _tradeStop    = na
+var float _tradeTarget  = na
+var float _tradeSLDist  = na
+var float _tradeTPDist  = na
+var int   _entryBar     = na
+var int   _lastExitBar  = na
+var float _tradeLabelY  = na
+var box   _riskBox      = na
+var box   _rewardBox    = na
+var label _tradeLabel   = na
+var label _tagEntry     = na
+var label _tagStop      = na
+var label _tagTarget    = na
+var label _entryMarker  = na
+
+var int   _totalTrades  = 0
+var int   _winTrades    = 0
+var int   _lossTrades   = 0
+var float _grossProfit  = 0.0
+var float _grossLoss    = 0.0
+var bool  _marginCallHit = false
+
+float _mcLevel         = _effInitialCapital * (i_marginCallPct / 100.0)
+float _realizedPnl     = _grossProfit - _grossLoss
+float _confirmedClose  = barstate.isconfirmed ? close : nz(close[1], open)
+float _unrealizedPnl   = _inTrade and not na(_tradeEntry) ? (_tradeDir == 1 ? (_confirmedClose - _tradeEntry) : (_tradeEntry - _confirmedClose)) * _effQty : 0.0
+float _liveEquity      = _effInitialCapital + _realizedPnl + _unrealizedPnl
+if not _marginCallHit and _liveEquity <= _mcLevel
+    _marginCallHit := true
+    _revPendArmed  := false
+    _revPendDir    := 0
+    _revPendPrice  := na
+
+bool _allowNewTrade = (na(_lastExitBar) or _lastExitBar != bar_index) and not _marginCallHit
+
+bool _revFillLong  = _revPendArmed and _revPendDir == 1  and high >= _revPendPrice and i_revSL > 0 and i_revTP > 0 and i_showNewLogic
+bool _revFillShort = _revPendArmed and _revPendDir == -1 and low  <= _revPendPrice and i_revSL > 0 and i_revTP > 0 and i_showNewLogic
+
+if not i_showNewLogic and _revPendArmed
+    _revPendArmed := false
+    _revPendDir   := 0
+    _revPendPrice := na
+
+if not _inTrade and _allowNewTrade and not _marginCallHit and i_revSL > 0 and i_revTP > 0 and i_showNewLogic and not (_revFillLong or _revFillShort)
+    if _revSigLong and i_enableLongs
+        _revPendArmed := true
+        _revPendDir   := 1
+        _revPendPrice := high[1] + _revOffset
+    else if _revSigShort and i_enableShorts
+        _revPendArmed := true
+        _revPendDir   := -1
+        _revPendPrice := low[1] - _revOffset
+
+bool _defLongOk    = _defLong  and _slDistanceRaw > 0 and _tpDistanceRaw > 0
+bool _defShortOk   = _defShort and _slDistanceRaw > 0 and _tpDistanceRaw > 0
+
+bool _longCond   = i_useNewLogic ? _revFillLong  : (_defLongOk or _revFillLong)
+bool _shortCond  = i_useNewLogic ? _revFillShort : (_defShortOk or _revFillShort)
+
+bool _canLong  = _barInFilter and not _barInNoTradeWindow and not _inTrade and _allowNewTrade and i_enableLongs  and _longCond  and _validBox and (_revFillLong or (_slDistanceRaw > 0 and _tpDistanceRaw > 0))
+bool _canShort = _barInFilter and not _barInNoTradeWindow and not _inTrade and _allowNewTrade and i_enableShorts and _shortCond and _validBox and (_revFillShort or (_slDistanceRaw > 0 and _tpDistanceRaw > 0))
+
+bool _pendingLong  = _barInFilter and not _barInNoTradeWindow and not _inTrade and _allowNewTrade and i_enableLongs  and not i_useNewLogic and _pendLong  and not _touchUpper and _validBox and _slDistanceRaw > 0 and _tpDistanceRaw > 0
+bool _pendingShort = _barInFilter and not _barInNoTradeWindow and not _inTrade and _allowNewTrade and i_enableShorts and not i_useNewLogic and _pendShort and not _touchLower and _validBox and _slDistanceRaw > 0 and _tpDistanceRaw > 0
+
+if i_useHoldMode
+    _canLong      := false
+    _canShort     := false
+    _pendingLong  := false
+    _pendingShort := false
+
+bool  _useRevLong  = _revFillLong and not (_defLongOk and not i_useNewLogic)
+bool  _useRevShort = _revFillShort and not (_defShortOk and not i_useNewLogic)
+float _entryL      = _useRevLong  ? _revPendPrice : _upper
+float _entryS      = _useRevShort ? _revPendPrice : _lower
+float _slL         = _useRevLong  ? i_revSL : _slDistanceRaw
+float _slS         = _useRevShort ? i_revSL : _slDistanceRaw
+float _tpL         = _useRevLong  ? i_revTP : _tpDistanceRaw
+float _tpS         = _useRevShort ? i_revTP : _tpDistanceRaw
+
+bool _newLong  = false
+bool _newShort = false
+string _exitReason = ""
+float _exitPrice = na
+float _exitPnl = na
+
+if _canLong and not _canShort
+    _inTrade      := true
+    _tradeDir     := 1
+    _tradeEntry   := _entryL
+    _tradeSLDist  := _slL
+    _tradeTPDist  := _tpL
+    _tradeStop    := _tradeEntry - _tradeSLDist
+    _tradeTarget  := _tradeEntry + _tradeTPDist
+    _entryBar     := bar_index
+    _tradeLabelY  := _lower - _labelOffset
+    _totalTrades  += 1
+    _newLong      := true
+    _revPendArmed := false
+    _revPendDir   := 0
+    _revPendPrice := na
+    _riskBox      := box.new(bar_index, _tradeEntry, bar_index + 2, _tradeStop, xloc=xloc.bar_index, bgcolor=_openFillVis ? color.new(i_riskFillColor, i_riskFillTransp) : na, border_color=na)
+    _rewardBox    := box.new(bar_index, _tradeTarget, bar_index + 2, _tradeEntry, xloc=xloc.bar_index, bgcolor=_openFillVis ? color.new(i_rewardFillColor, i_rewardFillTransp) : na, border_color=na)
+    if _activated
+        _tagEntry  := label.new(bar_index + 2, _tradeEntry,  f_fmt(_tradeEntry),  xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.lime, 10), textcolor=color.black, size=size.tiny)
+        _tagStop   := label.new(bar_index + 2, _tradeStop,   f_fmt(_tradeStop),   xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.lime, 10), textcolor=color.black, size=size.tiny)
+        _tagTarget := label.new(bar_index + 2, _tradeTarget, f_fmt(_tradeTarget), xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.lime, 10), textcolor=color.black, size=size.tiny)
+    if _activated and i_showSignals
+        _entryMarker := label.new(bar_index, na, "", xloc=xloc.bar_index, yloc=yloc.belowbar, style=label.style_triangleup, color=color.new(i_markerPendColor, 0), size=1)
+
+if _canShort and not _canLong
+    _inTrade      := true
+    _tradeDir     := -1
+    _tradeEntry   := _entryS
+    _tradeSLDist  := _slS
+    _tradeTPDist  := _tpS
+    _tradeStop    := _tradeEntry + _tradeSLDist
+    _tradeTarget  := _tradeEntry - _tradeTPDist
+    _entryBar     := bar_index
+    _tradeLabelY  := _upper + _labelOffset
+    _totalTrades  += 1
+    _newShort     := true
+    _revPendArmed := false
+    _revPendDir   := 0
+    _revPendPrice := na
+    _riskBox      := box.new(bar_index, _tradeStop, bar_index + 2, _tradeEntry, xloc=xloc.bar_index, bgcolor=_openFillVis ? color.new(i_riskFillColor, i_riskFillTransp) : na, border_color=na)
+    _rewardBox    := box.new(bar_index, _tradeEntry, bar_index + 2, _tradeTarget, xloc=xloc.bar_index, bgcolor=_openFillVis ? color.new(i_rewardFillColor, i_rewardFillTransp) : na, border_color=na)
+    if _activated
+        _tagEntry  := label.new(bar_index + 2, _tradeEntry,  f_fmt(_tradeEntry),  xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.red, 10), textcolor=color.white, size=size.tiny)
+        _tagStop   := label.new(bar_index + 2, _tradeStop,   f_fmt(_tradeStop),   xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.red, 10), textcolor=color.white, size=size.tiny)
+        _tagTarget := label.new(bar_index + 2, _tradeTarget, f_fmt(_tradeTarget), xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.red, 10), textcolor=color.white, size=size.tiny)
+    if _activated and i_showSignals
+        _entryMarker := label.new(bar_index, na, "", xloc=xloc.bar_index, yloc=yloc.abovebar, style=label.style_triangledown, color=color.new(i_markerPendColor, 0), size=1)
+
+if _inTrade
+    int _rightEdge = bar_index + 2
+    if not na(_riskBox)
+        box.set_right(_riskBox, _rightEdge)
+        box.set_bgcolor(_riskBox, _openFillVis ? color.new(i_riskFillColor, i_riskFillTransp) : na)
+        box.set_border_color(_riskBox, na)
+    if not na(_rewardBox)
+        box.set_right(_rewardBox, _rightEdge)
+        box.set_bgcolor(_rewardBox, _openFillVis ? color.new(i_rewardFillColor, i_rewardFillTransp) : na)
+        box.set_border_color(_rewardBox, na)
+    if _activated
+        if not na(_tagEntry)
+            label.set_x(_tagEntry, bar_index + 2)
+        if not na(_tagStop)
+            label.set_x(_tagStop, bar_index + 2)
+        if not na(_tagTarget)
+            label.set_x(_tagTarget, bar_index + 2)
+
+if _inTrade
+    bool _prevBarInFilter = bar_index > 0 ? _barInFilter[1] : false
+    bool _forceDayExit = i_useDayFilter and i_closeAtDayEnd and not _barInFilter and _prevBarInFilter
+    bool _forceMCExit  = _marginCallHit
+    bool _isEntryBar = not na(_entryBar) and _entryBar == bar_index
+    bool _slHit = not _forceDayExit and not _forceMCExit and (_tradeDir == 1 ? low <= _tradeStop : high >= _tradeStop)
+    bool _tpHit = not _forceDayExit and not _forceMCExit and (_tradeDir == 1 ? high >= _tradeTarget : low <= _tradeTarget)
+    bool _slHitValid = _slHit and not (_isEntryBar and (_tradeDir == 1 ? open <= _tradeStop : open >= _tradeStop))
+    bool _tpHitValid = _tpHit and not (_isEntryBar and (_tradeDir == 1 ? open >= _tradeTarget : open <= _tradeTarget))
+    if _forceDayExit or _forceMCExit or _slHitValid or _tpHitValid
+        if _forceMCExit
+            _exitPrice := _confirmedClose
+            _exitReason := "MARGIN CALL"
+        else if _forceDayExit
+            _exitPrice := close[1]
+            _exitReason := "DAY END"
+        else if _slHitValid and _tpHitValid
+            _exitPrice := _tradeStop
+            _exitReason := "SL (Ambiguous Bar)"
+        else if _slHitValid
+            _exitPrice := _tradeStop
+            _exitReason := "SL"
+        else
+            _exitPrice := _tradeTarget
+            _exitReason := "TP"
+
+        _exitPnl := _tradeDir == 1 ? (_exitPrice - _tradeEntry) * _effQty : (_tradeEntry - _exitPrice) * _effQty
+
+        if _exitPnl >= 0
+            _winTrades += 1
+            _grossProfit += _exitPnl
+        else
+            _lossTrades += 1
+            _grossLoss += math.abs(_exitPnl)
+
+        bool _isStopExit = _exitReason == "SL" or _exitReason == "SL (Ambiguous Bar)"
+        int  _closeRight = _forceDayExit ? bar_index - 1 : bar_index
+        string _closeText = "EN: " + f_fmt(_tradeEntry) + "\nSL: " + f_fmt(_tradeStop) + "\nTP: " + f_fmt(_tradeTarget) + "\nPnL: " + str.tostring(_exitPnl, "#.#####")
+
+        if not na(_riskBox)
+            box.set_right(_riskBox, _closeRight)
+            box.set_bgcolor(_riskBox, not _fillVis ? na : (_isStopExit ? color.new(color.gray, i_riskFillTransp) : color.new(i_riskFillColor, i_riskFillTransp)))
+            box.set_border_color(_riskBox, na)
+        if not na(_rewardBox)
+            box.set_right(_rewardBox, _closeRight)
+            box.set_bgcolor(_rewardBox, not _fillVis ? na : (_isStopExit ? color.new(color.gray, i_rewardFillTransp) : color.new(i_rewardFillColor, i_rewardFillTransp)))
+            box.set_border_color(_rewardBox, na)
+        if not na(_tagEntry)
+            label.delete(_tagEntry)
+            _tagEntry := na
+        if not na(_tagStop)
+            label.delete(_tagStop)
+            _tagStop := na
+        if not na(_tagTarget)
+            label.delete(_tagTarget)
+            _tagTarget := na
+        if not na(_entryMarker)
+            label.set_color(_entryMarker, color.new(_exitPnl >= 0 and not _isStopExit ? i_markerTpColor : i_markerSlColor, 0))
+            _entryMarker := na
+        if _activated and i_showLabels
+            _tradeLabel := label.new(_entryBar, _tradeLabelY, _closeText, xloc=xloc.bar_index, style=_tradeDir == 1 ? label.style_label_up : label.style_label_down, color=_isStopExit ? color.new(color.gray, 10) : color.new(color.lime, 10), textcolor=_isStopExit ? color.white : color.black, size = size.small)
+
+        _inTrade      := false
+        _tradeDir     := 0
+        _lastExitBar  := bar_index
+        _tradeEntry   := na
+        _tradeStop    := na
+        _tradeTarget  := na
+        _tradeSLDist  := na
+        _tradeTPDist  := na
+        _entryBar     := na
+        _tradeLabelY  := na
+        _riskBox      := na
+        _rewardBox    := na
+        _tradeLabel   := na
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 9B — HOLD-UNTIL-OPPOSITE MODE
+// ══════════════════════════════════════════════════════════════════════════
+
+var int          _hDir    = 0
+var array<float> _hEntry  = array.new<float>()
+var array<int>   _hBar    = array.new<int>()
+var array<label> _hMarker = array.new<label>()
+var array<line>  _hLine   = array.new<line>()
+
+bool  _hLongSig   = i_useNewLogic ? _revFillLong  : (_defLong  or _revFillLong)
+bool  _hShortSig  = i_useNewLogic ? _revFillShort : (_defShort or _revFillShort)
+bool  _hBarOk     = _barInFilter and not _barInNoTradeWindow and _validBox
+bool  _hLong      = i_useHoldMode and _hBarOk and _hLongSig  and not _hShortSig
+bool  _hShort     = i_useHoldMode and _hBarOk and _hShortSig and not _hLongSig
+bool  _hPrevInFlt = bar_index > 0 ? _barInFilter[1] : false
+bool  _hDayExit   = i_useHoldMode and i_useDayFilter and i_closeAtDayEnd and not _barInFilter and _hPrevInFlt
+
+float _hUnreal = 0.0
+if _hDir != 0 and array.size(_hEntry) > 0
+    for _e in _hEntry
+        _hUnreal += (_hDir == 1 ? _confirmedClose - _e : _e - _confirmedClose) * _effQty
+
+if i_useHoldMode and not _marginCallHit and (_effInitialCapital + _grossProfit - _grossLoss + _hUnreal) <= _mcLevel
+    _marginCallHit := true
+    _revPendArmed  := false
+    _revPendDir    := 0
+    _revPendPrice  := na
+
+bool _hOppSig = (_hDir == 1 and _hShort) or (_hDir == -1 and _hLong)
+
+if i_useHoldMode and _hDir != 0 and array.size(_hEntry) > 0 and (_marginCallHit or _hDayExit or _hOppSig)
+    float  _hExitPx  = _marginCallHit ? _confirmedClose : _hDayExit ? close[1] : (_hDir == 1 ? _entryS : _entryL)
+    string _hReason  = _marginCallHit ? "MARGIN CALL" : _hDayExit ? "DAY END" : "OPPOSITE SIGNAL"
+    int    _hExitBar = _hDayExit ? bar_index - 1 : bar_index
+    for _i = 0 to array.size(_hEntry) - 1
+        float _en  = array.get(_hEntry, _i)
+        float _pnl = _hDir == 1 ? (_hExitPx - _en) * _effQty : (_en - _hExitPx) * _effQty
+        if _pnl >= 0
+            _winTrades   += 1
+            _grossProfit += _pnl
+        else
+            _lossTrades  += 1
+            _grossLoss   += math.abs(_pnl)
+        color _resCol = _pnl >= 0 ? i_markerTpColor : i_markerSlColor
+        label _mk = array.get(_hMarker, _i)
+        if not na(_mk)
+            label.set_color(_mk, color.new(_resCol, 0))
+        line _ln = array.get(_hLine, _i)
+        if not na(_ln)
+            line.set_x2(_ln, _hExitBar)
+            line.set_y2(_ln, _hExitPx)
+            line.set_color(_ln, color.new(_resCol, 20))
+        if _activated and i_showLabels
+            label.new(array.get(_hBar, _i), _hDir == 1 ? _en - _labelOffset : _en + _labelOffset, "EN: " + f_fmt(_en) + "\nEX: " + f_fmt(_hExitPx) + "\n" + _hReason + "\nPnL: " + str.tostring(_pnl, "#.#####"), xloc=xloc.bar_index, style=_hDir == 1 ? label.style_label_up : label.style_label_down, color=color.new(_resCol, 10), textcolor=color.black, size=size.small)
+    array.clear(_hEntry)
+    array.clear(_hBar)
+    array.clear(_hMarker)
+    array.clear(_hLine)
+    _hDir := 0
+
+var int _hLastBrickBar = na
+float _hCandPx    = _hLong ? _entryL : _entryS
+bool  _hLevelUsed = false
+if array.size(_hEntry) > 0
+    for _e in _hEntry
+        if math.abs(_e - _hCandPx) < syminfo.mintick * 0.5
+            _hLevelUsed := true
+bool  _hBrickFree = (na(_hLastBrickBar) or _hLastBrickBar != _boxStartBar) and not _hLevelUsed
+
+bool _hOpenLong  = _hLong  and i_enableLongs  and not _marginCallHit and _hDir != -1 and _hBrickFree
+bool _hOpenShort = _hShort and i_enableShorts and not _marginCallHit and _hDir != 1  and _hBrickFree
+
+if i_useHoldMode and (_hOpenLong or _hOpenShort)
+    int   _d  = _hOpenLong ? 1 : -1
+    float _en = _hOpenLong ? _entryL : _entryS
+    _hDir          := _d
+    _hLastBrickBar := _boxStartBar
+    _totalTrades   += 1
+    array.push(_hEntry, _en)
+    array.push(_hBar, bar_index)
+    label _mk = na
+    line  _ln = na
+    if _activated and i_showSignals
+        _mk := label.new(bar_index, na, "", xloc=xloc.bar_index, yloc=_d == 1 ? yloc.belowbar : yloc.abovebar, style=_d == 1 ? label.style_triangleup : label.style_triangledown, color=color.new(i_markerPendColor, 0), size=1)
+    if _activated and i_showLevels
+        _ln := line.new(bar_index, _en, bar_index + 1, _en, xloc=xloc.bar_index, color=color.new(_d == 1 ? color.lime : color.red, 30), style=line.style_dotted, width=1)
+    array.push(_hMarker, _mk)
+    array.push(_hLine, _ln)
+    if _d == 1
+        _newLong  := true
+    else
+        _newShort := true
+
+if i_useHoldMode and ((_hLong and _revFillLong) or (_hShort and _revFillShort))
+    _revPendArmed := false
+    _revPendDir   := 0
+    _revPendPrice := na
+
+if i_useHoldMode and _hDir != 0 and array.size(_hLine) > 0
+    for _l in _hLine
+        if not na(_l)
+            line.set_x2(_l, bar_index)
+
+plotshape(_activated and i_showSignals and _newLong,  title="BUY Marker",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.lime, 0), size=size.tiny, display=display.none)
+plotshape(_activated and i_showSignals and _newShort, title="SELL Marker", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0),  size=size.tiny, display=display.none)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 10 — MS-MTF OSCILLATOR
+// ══════════════════════════════════════════════════════════════════════════
+
+int mtf_Smoother = input.int(5, "MTF Smoother", minval=1, group="MS-MTF Oscillator Settings")
+
+f_mtf_calc() =>
+    m_ys1 = (high + low + close * 2.0) / 4.0
+    m_rk3 = ta.ema(m_ys1, mtf_Smoother)
+    m_rk4 = ta.stdev(m_ys1, mtf_Smoother)
+    m_den = math.max(m_rk4, 1e-10)
+    m_rk5 = (m_ys1 - m_rk3) * 200.0 / m_den
+    m_rk6 = ta.ema(m_rk5, mtf_Smoother)
+    m_up  = ta.ema(m_rk6, mtf_Smoother)
+    m_dn  = ta.ema(m_up, mtf_Smoother)
+    [m_up, m_dn]
+
+[mUp1,  mDn1 ] = request.security(syminfo.tickerid, "1",  f_mtf_calc(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[mUp3,  mDn3 ] = request.security(syminfo.tickerid, "3",  f_mtf_calc(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[mUp5,  mDn5 ] = request.security(syminfo.tickerid, "5",  f_mtf_calc(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+[mUp30, mDn30] = request.security(syminfo.tickerid, "30", f_mtf_calc(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+bool mBull1  = mUp1  > mDn1
+bool mBull3  = mUp3  > mDn3
+bool mBull5  = mUp5  > mDn5
+bool mBull30 = mUp30 > mDn30
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 11 — INFO TABLE (WITH AUTO-TRADE SIGNAL ROW)
+// ══════════════════════════════════════════════════════════════════════════
+
+var table infoTable = table.new(position.top_right, 2, 22,
+     border_width=1,
+     border_color=color.rgb(100, 130, 255, 40),
+     frame_width=1,
+     frame_color=color.rgb(40, 60, 120, 20))
+
+int   _closedTrades    = _winTrades + _lossTrades
+float _netProfit       = _grossProfit - _grossLoss
+float _equity          = _effInitialCapital + _netProfit
+float _marginCallLevel = _mcLevel
+float _winRate         = _closedTrades > 0 ? (_winTrades * 100.0) / _closedTrades : na
+
+string _daysLabel      = str.tostring(_tradingDays) + " Days"
+string _timePart       = i_useTimeFilter ? (" | " + str.tostring(i_filterHour) + ":" + str.tostring(i_filterMinute, "00") + " " + i_filterMeridiem) : ""
+string _filterLabel    = i_useDayFilter ? ("D-" + str.tostring(i_daysBack) + _timePart) : (i_useTimeFilter ? ("Time" + _timePart) : _daysLabel)
+string _mcStatus       = _marginCallHit ? "MARGIN CALL" : "SAFE"
+string _blockLabel     = i_useNoTradeWindow ? (str.tostring(i_noTradeStartHour) + ":" + str.tostring(i_noTradeStartMinute, "00") + " " + i_noTradeStartMeridiem + " → " + str.tostring(i_noTradeEndHour) + ":" + str.tostring(i_noTradeEndMinute, "00") + " " + i_noTradeEndMeridiem) : "OFF"
+
+var label _upperPriceTag   = na
+var label _lowerPriceTag   = na
+var label _buyTpPriceTag   = na
+var label _sellTpPriceTag  = na
+
+if barstate.islast and _activated
+    table.clear(infoTable, 0, 0, 1, 21)
+
+    table.cell(infoTable, 0, 0, " ", text_color=color.new(color.white, 100), bgcolor=color.new(color.black, 100), text_size=size.tiny)
+    table.cell(infoTable, 1, 0, " ", text_color=color.new(color.white, 100), bgcolor=color.new(color.black, 100), text_size=size.tiny)
+
+    int _row = 1
+
+    // ── AUTO-TRADE SIGNAL ROW (Tracks Entry & Exit for both modes) ──
+    string _signalState = "FLAT"
+    color  _signalBg    = color.rgb(18, 22, 35)
+    color  _signalTxt   = color.rgb(160, 170, 190)
+
+    if i_useHoldMode
+        if _hOpenLong
+            _signalState := "BUY (HOLD)"
+            _signalBg    := color.rgb(0, 200, 100)
+            _signalTxt   := color.black
+        else if _hOpenShort
+            _signalState := "SELL (HOLD)"
+            _signalBg    := color.rgb(240, 50, 60)
+            _signalTxt   := color.white
+        else if _hOppSig
+            _signalState := (_hDir == 1) ? "CLOSE_BUY -> SELL" : "CLOSE_SELL -> BUY"
+            _signalBg    := color.rgb(255, 160, 0)
+            _signalTxt   := color.black
+        else if _hDir == 1
+            _signalState := "HOLD_BUY (x" + str.tostring(array.size(_hEntry)) + ")"
+            _signalBg    := color.rgb(20, 80, 45)
+            _signalTxt   := color.rgb(120, 255, 170)
+        else if _hDir == -1
+            _signalState := "HOLD_SELL (x" + str.tostring(array.size(_hEntry)) + ")"
+            _signalBg    := color.rgb(80, 25, 30)
+            _signalTxt   := color.rgb(255, 140, 150)
+        else
+            _signalState := "FLAT"
+    else
+        if _newLong
+            _signalState := "BUY"
+            _signalBg    := color.rgb(0, 200, 100)
+            _signalTxt   := color.black
+        else if _newShort
+            _signalState := "SELL"
+            _signalBg    := color.rgb(240, 50, 60)
+            _signalTxt   := color.white
+        else if not na(_exitReason) and _exitReason != ""
+            _signalState := "CLOSE_" + (_tradeDir == 1 or _exitPnl > 0 ? "BUY" : "SELL")
+            _signalBg    := color.rgb(255, 140, 0)
+            _signalTxt   := color.black
+        else if _inTrade
+            if _tradeDir == 1
+                _signalState := "IN_BUY"
+                _signalBg    := color.rgb(15, 60, 35)
+                _signalTxt   := color.rgb(80, 240, 140)
+            else if _tradeDir == -1
+                _signalState := "IN_SELL"
+                _signalBg    := color.rgb(65, 20, 25)
+                _signalTxt   := color.rgb(255, 120, 130)
+        else
+            _signalState := "FLAT"
+
+    table.cell(infoTable, 0, _row, "SIGNAL", text_color=color.rgb(255, 215, 0), bgcolor=color.rgb(22, 28, 42), text_font_family=font.family_monospace, text_size=size.small)
+    table.cell(infoTable, 1, _row, _signalState, text_color=_signalTxt, bgcolor=_signalBg, text_font_family=font.family_monospace, text_size=size.small, text_halign=text.align_center)
+    _row += 1
+
+    if i_showMtfRows
+        string _oscTxt = (na(mUp1) ? " - " : str.tostring(mUp1, "#.#")) + " | " + (na(mUp3) ? " - " : str.tostring(mUp3, "#.#")) + " | " + (na(mUp5) ? " - " : str.tostring(mUp5, "#.#")) + " | "  + (na(mUp30) ? " - " : str.tostring(mUp30, "#.#"))
+        table.cell(infoTable, 0, _row, "smc", text_color=color.rgb(220, 240, 255), bgcolor=color.rgb(12, 18, 28), text_font_family=font.family_monospace, text_size=size.small)
+        table.cell(infoTable, 1, _row, _oscTxt, text_color=color.rgb(235, 240, 255), bgcolor=color.rgb(14, 18, 28), text_size=size.small, text_halign=text.align_center)
+        _row += 1
+
+        string _dotsTxt = (na(mUp1) or na(mDn1) ? "·" : mBull1 ? "⚪" : "⚫") + " " + (na(mUp3) or na(mDn3) ? "·" : mBull3 ? "⚪" : "⚫") + " " + (na(mUp5) or na(mDn5) ? "·" : mBull5 ? "⚪" : "⚫") + " " + (na(mUp30) or na(mDn30) ? "·" : mBull30 ? "⚪" : "⚫")
+        table.cell(infoTable, 0, _row, "Dots", text_color=color.rgb(220, 240, 255), bgcolor=color.rgb(12, 18, 28), text_font_family=font.family_monospace, text_size=size.small)
+        table.cell(infoTable, 1, _row, _dotsTxt, text_color=color.rgb(235, 240, 255), bgcolor=color.rgb(16, 20, 30), text_size=size.small, text_halign=text.align_center)
+        _row += 1
+
+    if i_showStatsTbl
+        table.cell(infoTable, 0, _row, " Trade Stats", text_color=color.white, bgcolor=color.rgb(18, 22, 35), text_font_family=font.family_monospace, text_size=size.small)
+        table.cell(infoTable, 1, _row, _filterLabel, text_color=color.rgb(255, 200, 80), bgcolor=color.rgb(18, 22, 35), text_font_family=font.family_monospace, text_size=size.small, text_halign=text.align_center)
+        _row += 1
+
+        table.cell(infoTable, 0, _row, "Total Trades", text_color=color.rgb(205, 215, 230), bgcolor=color.rgb(14, 18, 28), text_font_family=font.family_monospace, text_size=size.small)
+        table.cell(infoTable, 1, _row, str.tostring(_totalTrades), text_color=color.rgb(235, 240, 255), bgcolor=color.rgb(14, 18, 28), text_font_family=font.family_monospace, text_size=size.small, text_halign=text.align_center)
+        _row += 1
+
+        table.cell(infoTable, 0, _row, "Win Trades", text_color=color.rgb(205, 215, 230), bgcolor=color.rgb(16, 20, 30), text_font_family=font.family_monospace, text_size=size.small)
+        table.cell(infoTable, 1, _row, str.tostring(_winTrades), text_color=color.rgb(50, 220, 120), bgcolor=color.rgb(16, 20, 30), text_font_family=font.family_monospace, text_size=size.small, text_halign=text.align_center)
+        _row += 1
+
+        table.cell(infoTable, 0, _row, "Loss Trades", text_color=color.rgb(205, 215, 230), bgcolor=color.rgb(14, 18, 28), text_font_family=font.family_monospace, text_size=size.small)
+        table.cell(infoTable, 1, _row, str.tostring(_lossTrades), text_color=color.rgb(255, 90, 100), bgcolor=color.rgb(14, 18, 28), text_font_family=font.family_monospace, text_size=size.small, text_halign=text.align_center)
+        _row += 1
+
+        table.cell(infoTable, 0, _row, "Win Rate", text_color=color.rgb(205, 215, 230), bgcolor=color.rgb(16, 20, 30), text_font_family=font.family_monospace, text_size=size.small)
+        table.cell(infoTable, 1, _row, na(_winRate) ? "-" : str.tostring(_winRate, "#.##") + "%", text_color=color.rgb(160, 210, 255), bgcolor=color.rgb(16, 20, 30), text_font_family=font.family_monospace, text_size=size.small, text_halign=text.align_center)
+        _row += 1
+
+        table.cell(infoTable, 0, _row, "Net Profit", text_color=color.rgb(205, 215, 230), bgcolor=color.rgb(14, 18, 28), text_font_family=font.family_monospace, text_size=size.small)
+        table.cell(infoTable, 1, _row, str.tostring(_netProfit, "#.#####"), text_color=_netProfit >= 0 ? color.rgb(50, 220, 120) : color.rgb(255, 90, 100), bgcolor=color.rgb(14, 18, 28), text_font_family=font.family_monospace, text_size=size.small, text_halign=text.align_center)
+        _row += 1
+
+        table.cell(infoTable, 0, _row, "MC Status", text_color=color.rgb(205, 215, 230), bgcolor=color.rgb(16, 20, 30), text_font_family=font.family_monospace, text_size=size.small)
+        table.cell(infoTable, 1, _row, _mcStatus, text_color=_mcStatus == "SAFE" ? color.rgb(50, 220, 120) : color.rgb(255, 90, 100), bgcolor=color.rgb(16, 20, 30), text_font_family=font.family_monospace, text_size=size.small, text_halign=text.align_center)
+        _row += 1
+
+    if i_showPending
+        string _pendingText = ""
+        color  _pendingCol  = color.rgb(160, 170, 190)
+        if _marginCallHit
+            _pendingText := "BLOCKED"
+            _pendingCol  := color.rgb(255, 90, 100)
+        else if _inTrade
+            _pendingText := "IN TRADE"
+            _pendingCol  := color.rgb(160, 210, 255)
+        else
+            if _pendingLong and _pendingShort
+                _pendingText := "PBUY: " + f_fmt(_upper) + " | PSELL: " + f_fmt(_lower)
+                _pendingCol  := color.rgb(255, 200, 80)
+            else if _pendingLong
+                _pendingText := "PBUY: " + f_fmt(_upper)
+                _pendingCol  := color.rgb(50, 220, 120)
+            else if _pendingShort
+                _pendingText := "PSELL: " + f_fmt(_lower)
+                _pendingCol  := color.rgb(255, 90, 100)
+            if _revPendArmed and i_showNewLogic
+                string _revTxt = (_revPendDir == 1 ? "N BUY: " : "N SELL: ") + f_fmt(_revPendPrice)
+                _pendingText := _pendingText != "" ? _pendingText + " | " + _revTxt : _revTxt
+                _pendingCol  := _revPendDir == 1 ? color.rgb(50, 220, 120) : color.rgb(255, 90, 100)
+            if _pendingText == ""
+                _pendingText := "-"
+                _pendingCol  := color.rgb(160, 170, 190)
+        table.cell(infoTable, 0, _row, "P-O", text_color=color.rgb(205, 215, 230), bgcolor=color.rgb(14, 18, 28), text_font_family=font.family_monospace, text_size=size.small)
+        table.cell(infoTable, 1, _row, _pendingText, text_color=_pendingCol, bgcolor=color.rgb(14, 18, 28), text_font_family=font.family_monospace, text_size=size.small, text_halign=text.align_center)
+
+    int _tagX = bar_index + 2
+    if i_showPriceTags
+        if na(_upperPriceTag)
+            _upperPriceTag := label.new(_tagX, _upper, f_fmt(_upper), xloc=xloc.bar_index, style=label.style_none, textcolor=_core, color=color.new(color.black, 100), size=size.tiny)
+        else
+            label.set_x(_upperPriceTag, _tagX)
+            label.set_y(_upperPriceTag, _upper)
+            label.set_text(_upperPriceTag, f_fmt(_upper))
+            label.set_textcolor(_upperPriceTag, _core)
+
+        if na(_lowerPriceTag)
+            _lowerPriceTag := label.new(_tagX, _lower, f_fmt(_lower), xloc=xloc.bar_index, style=label.style_none, textcolor=_core, color=color.new(color.black, 100), size=size.tiny)
+        else
+            label.set_x(_lowerPriceTag, _tagX)
+            label.set_y(_lowerPriceTag, _lower)
+            label.set_text(_lowerPriceTag, f_fmt(_lower))
+            label.set_textcolor(_lowerPriceTag, _core)
+
+        if i_showTpGuides and i_enableLongs
+            if na(_buyTpPriceTag)
+                _buyTpPriceTag := label.new(_tagX, _buyTpGuide, f_fmt(_buyTpGuide), xloc=xloc.bar_index, style=label.style_none, textcolor=color.new(i_buyTpColor, 0), color=color.new(color.black, 100), size=size.tiny)
+            else
+                label.set_x(_buyTpPriceTag, _tagX)
+                label.set_y(_buyTpPriceTag, _buyTpGuide)
+                label.set_text(_buyTpPriceTag, f_fmt(_buyTpGuide))
+                label.set_textcolor(_buyTpPriceTag, color.new(i_buyTpColor, 0))
+        else if not na(_buyTpPriceTag)
+            label.delete(_buyTpPriceTag)
+            _buyTpPriceTag := na
+
+        if i_showTpGuides and i_enableShorts
+            if na(_sellTpPriceTag)
+                _sellTpPriceTag := label.new(_tagX, _sellTpGuide, f_fmt(_sellTpGuide), xloc=xloc.bar_index, style=label.style_none, textcolor=color.new(i_sellTpColor, 0), color=color.new(color.black, 100), size=size.tiny)
+            else
+                label.set_x(_sellTpPriceTag, _tagX)
+                label.set_y(_sellTpPriceTag, _sellTpGuide)
+                label.set_text(_sellTpPriceTag, f_fmt(_sellTpGuide))
+                label.set_textcolor(_sellTpPriceTag, color.new(i_sellTpColor, 0))
+        else if not na(_sellTpPriceTag)
+            label.delete(_sellTpPriceTag)
+            _sellTpPriceTag := na
+    else
+        if not na(_upperPriceTag)
+            label.delete(_upperPriceTag)
+            _upperPriceTag := na
+        if not na(_lowerPriceTag)
+            label.delete(_lowerPriceTag)
+            _lowerPriceTag := na
+        if not na(_buyTpPriceTag)
+            label.delete(_buyTpPriceTag)
+            _buyTpPriceTag := na
+        if not na(_sellTpPriceTag)
+            label.delete(_sellTpPriceTag)
+            _sellTpPriceTag := na
+
+if barstate.islast and _activated and i_useHoldMode
+    int   _hRow = 1 + 1 + (i_showMtfRows ? 2 : 0) + (i_showStatsTbl ? 7 : 0) + (i_showPending ? 1 : 0)
+    float _hFl  = 0.0
+    if _hDir != 0 and array.size(_hEntry) > 0
+        for _e in _hEntry
+            _hFl += (_hDir == 1 ? close - _e : _e - close) * _effQty
+    string _hTxt = _hDir == 0 ? "FLAT" : ((_hDir == 1 ? "BUY x" : "SELL x") + str.tostring(array.size(_hEntry)) + " | U-PnL: " + str.tostring(_hFl, "#.##"))
+    color  _hCol = _hDir == 1 ? color.rgb(50, 220, 120) : _hDir == -1 ? color.rgb(255, 90, 100) : color.rgb(160, 170, 190)
+    table.cell(infoTable, 0, _hRow, "HOLD", text_color=color.rgb(205, 215, 230), bgcolor=color.rgb(16, 20, 30), text_font_family=font.family_monospace, text_size=size.small)
+    table.cell(infoTable, 1, _hRow, _hTxt, text_color=_hCol, bgcolor=color.rgb(16, 20, 30), text_font_family=font.family_monospace, text_size=size.small, text_halign=text.align_center)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  FREE-TIER ALERT CONDITIONS (Notify In App on Free TradingView!)
+// ══════════════════════════════════════════════════════════════════════════
+alertcondition(_newLong or (i_useHoldMode and _hOpenLong), title="AUTO BUY", message="BUY")
+alertcondition(_newShort or (i_useHoldMode and _hOpenShort), title="AUTO SELL", message="SELL")
+alertcondition((not na(_exitReason) and _exitReason != "") or (i_useHoldMode and _hOppSig), title="AUTO CLOSE", message="CLOSE")
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 12 — ADD-ON: CANDLE MATRIX & OB/OS
+// ══════════════════════════════════════════════════════════════════════════
+
+Smoother = input.int(5, "Smoother", group="Candle Matrix Settings")
+SupResPeriod = input.int(50, "Sup/Res Period", group="Candle Matrix Settings")
+SupResPercentage = input.int(100, "Sup/Res %", group="Candle Matrix Settings")
+PricePeriod = input.int(16, "Price Period", group="Candle Matrix Settings")
+ob = input.float(200, title='Overbought', group="Candle Matrix Settings")
+os = input.float(-200, title='Oversold', group="Candle Matrix Settings")
+OBOS = input.bool(false, title='Show OB/OS', group="Candle Matrix Settings")
+dynamic = input.bool(true, title='Dynamic zones', group="Candle Matrix Settings")
+
+ys1 = (high + low + close * 2) / 4
+rk3 = ta.ema(ys1, Smoother)
+rk4 = ta.stdev(ys1, Smoother)
+rk5 = (ys1 - rk3) * 200 / rk4
+rk6 = ta.ema(rk5, Smoother)
+up = ta.ema(rk6, Smoother)
+down = ta.ema(up, Smoother)
+
+isBullish = up > down
+barcolor(_activated and show_candle_matrix ? (isBullish ? color.white : color.gray) : color(na))
+
+highest_1 = ta.highest(up, 1)
+highest_2 = ta.highest(down, 1)
+UPshape = up > ob and up > down ? highest_1 + 20 : up > ob and up < down ? highest_2 + 20 : na
+
+lowest_1 = ta.lowest(down, 1)
+lowest_2 = ta.lowest(up, 1)
+DOWNshape = down < os and up > down ? lowest_1 - 20 : down < os and up < down ? lowest_2 - 20 : na
+
+plotshape(_activated and show_candle_matrix ? UPshape : na, style=shape.xcross, location=location.abovebar, color=color.new(#00FFFF, 0), size=size.tiny, force_overlay=true)
+plotshape(_activated and show_candle_matrix ? DOWNshape : na, style=shape.xcross, location=location.belowbar, color=color.new(#00FFFF, 0), size=size.tiny, force_overlay=true)
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 13 — ADD-ON: SMC LITE
+// ══════════════════════════════════════════════════════════════════════════
+
+swing_length = input.int(10, title = 'Swing High/Low Length', group = 'SMC Settings', minval = 1, maxval = 50)
+history_of_demand_to_keep = input.int(20, title = 'History To Keep', minval = 5, maxval = 50)
+box_width = input.float(2.5, title = 'Supply/Demand Box Width', group = 'SMC Settings', minval = 1, maxval = 10, step = 0.5)
+
+show_zigzag = input.bool(false, title = 'Show Zig Zag', group = 'SMC Visual Settings', inline = '1')
+show_price_action_labels = input.bool(false, title = 'Show Price Action Labels', group = 'SMC Visual Settings', inline = '2')
+
+supply_color = input.color(color.new(#EDEDED,100), title = 'Supply', group = 'SMC Visual Settings', inline = '3')
+supply_outline_color = input.color(color.new(color.white,80), title = 'Outline', group = 'SMC Visual Settings', inline = '3')
+
+demand_color = input.color(color.new(#00FFFF,100), title = 'Demand', group = 'SMC Visual Settings', inline = '4')
+demand_outline_color = input.color(color.new(color.white,80), title = 'Outline', group = 'SMC Visual Settings', inline = '4')
+
+bos_label_color = input.color(color.new(color.white,100), title = 'BOS Label', group = 'SMC Visual Settings', inline = '5')
+poi_label_color = input.color(color.new(color.white,100), title = 'POI Label', group = 'SMC Visual Settings', inline = '7')
+
+swing_type_color = input.color(color.black, title = 'Price Action Label', group = 'SMC Visual Settings', inline = '8')
+zigzag_color = input.color(color.new(#000000,0), title = 'Zig Zag', group = 'SMC Visual Settings', inline = '9')
+
+atrdds = ta.atr(50)
+
+var current_supply_box = array.new_box(history_of_demand_to_keep, na)
+var current_demand_box = array.new_box(history_of_demand_to_keep, na)
+var current_supply_poi = array.new_box(history_of_demand_to_keep, na)
+var current_demand_poi = array.new_box(history_of_demand_to_keep, na)
+
+var supply_bos = array.new_box(5, na)
+var demand_bos = array.new_box(5, na)
+
+var swing_high_values = array.new_float(5, 0.00)
+var swing_low_values = array.new_float(5, 0.00)
+var swing_high_bns = array.new_int(5, 0)
+var swing_low_bns = array.new_int(5, 0)
+f_array_add_pop(arr, new_value_to_add) =>
+    array.unshift(arr, new_value_to_add)
+    array.pop(arr)
+
+f_sh_sl_labels(arr, swing_type) =>
+    var string label_text = na
+    if swing_type == 1
+        if array.get(arr, 0) >= array.get(arr, 1)
+            label_text := 'HH'
+        else
+            label_text := 'LH'
+        label.new(bar_index - swing_length, array.get(arr,0), text = label_text, style=label.style_label_down, textcolor = swing_type_color, color = color.new(swing_type_color, 100), size = size.tiny, force_overlay=true)
+    else if swing_type == -1
+        if array.get(arr, 0) >= array.get(arr, 1)
+            label_text := 'HL'
+        else
+            label_text := 'LL'
+        label.new(bar_index - swing_length, array.get(arr,0), text = label_text, style=label.style_label_up, textcolor = swing_type_color, color = color.new(swing_type_color, 100), size = size.tiny, force_overlay=true)
+
+f_check_overlapping(new_poi, box_array, atr) =>
+    atr_threshold = atr * 2
+    okay_to_draw = true
+    for i = 0 to array.size(box_array) - 1
+        top = box.get_top(array.get(box_array, i))
+        bottom = box.get_bottom(array.get(box_array, i))
+        poi = (top + bottom) / 2
+        upper_boundary = poi + atr_threshold
+        lower_boundary = poi - atr_threshold
+        if new_poi >= lower_boundary and new_poi <= upper_boundary
+            okay_to_draw := false
+            break
+        else 
+            okay_to_draw := true
+    okay_to_draw
+
+f_supply_demand(value_array, bn_array, box_array, label_array, box_type, atr) =>
+    atr_buffer = atr * (box_width / 10)
+    box_left = array.get(bn_array, 0)
+    box_right = bar_index
+    var float box_top = 0.00
+    var float box_bottom = 0.00
+    var float poi = 0.00
+
+    if box_type == 1
+        box_top := array.get(value_array, 0)
+        box_bottom := box_top - atr_buffer
+        poi := (box_top + box_bottom) / 2
+    else if box_type == -1
+        box_bottom := array.get(value_array, 0)
+        box_top := box_bottom + atr_buffer
+        poi := (box_top + box_bottom) / 2
+
+    okay_to_draw = f_check_overlapping(poi, box_array, atr)
+
+    if box_type == 1 and okay_to_draw
+        box.delete( array.get(box_array, array.size(box_array) - 1) )
+        f_array_add_pop(box_array, box.new( left = box_left, top = box_top, right = box_right, bottom = box_bottom, border_color = supply_outline_color, bgcolor = supply_color, extend = extend.right, text = 'S', text_halign = text.align_center, text_valign = text.align_center, text_color = poi_label_color, text_size = size.small, xloc = xloc.bar_index, force_overlay=true))
+        
+        box.delete( array.get(label_array, array.size(label_array) - 1) )
+        f_array_add_pop(label_array, box.new( left = box_left, top = poi, right = box_right, bottom = poi, border_color = color.new(poi_label_color,90), bgcolor = color.new(poi_label_color,90), extend = extend.right, text = 'O', text_halign = text.align_left, text_valign = text.align_center, text_color = poi_label_color, text_size = size.small, xloc = xloc.bar_index, force_overlay=true))
+
+    else if box_type == -1 and okay_to_draw
+        box.delete( array.get(box_array, array.size(box_array) - 1) )
+        f_array_add_pop(box_array, box.new( left = box_left, top = box_top, right = box_right, bottom = box_bottom, border_color = demand_outline_color, bgcolor = demand_color, extend = extend.right, text = 'D', text_halign = text.align_center, text_valign = text.align_center, text_color = poi_label_color, text_size = size.small, xloc = xloc.bar_index, force_overlay=true))
+        
+        box.delete( array.get(label_array, array.size(label_array) - 1) )
+        f_array_add_pop(label_array, box.new( left = box_left, top = poi, right = box_right, bottom = poi, border_color = color.new(poi_label_color,90), bgcolor = color.new(poi_label_color,90), extend = extend.right, text = 'O', text_halign = text.align_left, text_valign = text.align_center, text_color = poi_label_color, text_size = size.small, xloc = xloc.bar_index, force_overlay=true))
+
+f_sd_to_bos(box_array, bos_array, label_array, zone_type) =>
+    if zone_type == 1
+        for i = 0 to array.size(box_array) - 1
+            level_to_break = box.get_top(array.get(box_array,i))
+            if close >= level_to_break
+                copied_box = box.copy(array.get(box_array,i))
+                f_array_add_pop(bos_array, copied_box)
+                mid = (box.get_top(array.get(box_array,i)) + box.get_bottom(array.get(box_array,i))) / 2
+                box.set_top(array.get(bos_array,0), mid)
+                box.set_bottom(array.get(bos_array,0), mid)
+                box.set_extend( array.get(bos_array,0), extend.none)
+                box.set_right( array.get(bos_array,0), bar_index)
+                box.set_text( array.get(bos_array,0), 'B' )
+                box.set_text_color( array.get(bos_array,0), bos_label_color)
+                box.set_text_size( array.get(bos_array,0), size.small)
+                box.set_text_halign( array.get(bos_array,0), text.align_center)
+                box.set_text_valign( array.get(bos_array,0), text.align_center)
+                box.delete(array.get(box_array, i))
+                box.delete(array.get(label_array, i))
+
+    if zone_type == -1
+        for i = 0 to array.size(box_array) - 1
+            level_to_break = box.get_bottom(array.get(box_array,i))
+            if close <= level_to_break
+                copied_box = box.copy(array.get(box_array,i))
+                f_array_add_pop(bos_array, copied_box)
+                mid = (box.get_top(array.get(box_array,i)) + box.get_bottom(array.get(box_array,i))) / 2
+                box.set_top(array.get(bos_array,0), mid)
+                box.set_bottom(array.get(bos_array,0), mid)
+                box.set_extend( array.get(bos_array,0), extend.none)
+                box.set_right( array.get(bos_array,0), bar_index)
+                box.set_text( array.get(bos_array,0), 'B' )
+                box.set_text_color( array.get(bos_array,0), bos_label_color)
+                box.set_text_size( array.get(bos_array,0), size.small)
+                box.set_text_halign( array.get(bos_array,0), text.align_center)
+                box.set_text_valign( array.get(bos_array,0), text.align_center)
+                box.delete(array.get(box_array, i))
+                box.delete(array.get(label_array, i))
+
+f_extend_box_endpoint(box_array) =>
+    for i = 0 to array.size(box_array) - 1
+        box.set_right(array.get(box_array, i), bar_index + 100)
+
+swing_high = ta.pivothigh(high, swing_length, swing_length)
+swing_low = ta.pivotlow(low, swing_length, swing_length)
+
+if show_smc and _activated
+    if not na(swing_high)
+        f_array_add_pop(swing_high_values, swing_high)
+        f_array_add_pop(swing_high_bns, bar_index[swing_length])
+        if show_price_action_labels
+            f_sh_sl_labels(swing_high_values, 1)
+        f_supply_demand(swing_high_values, swing_high_bns, current_supply_box, current_supply_poi, 1, atrdds)
+    else if not na(swing_low)
+        f_array_add_pop(swing_low_values, swing_low)
+        f_array_add_pop(swing_low_bns, bar_index[swing_length])
+        if show_price_action_labels
+            f_sh_sl_labels(swing_low_values, -1)
+        f_supply_demand(swing_low_values, swing_low_bns, current_demand_box, current_demand_poi, -1, atrdds)
+
+    f_sd_to_bos(current_supply_box, supply_bos, current_supply_poi, 1)
+    f_sd_to_bos(current_demand_box, demand_bos, current_demand_poi, -1)
+
+    f_extend_box_endpoint(current_supply_box)
+    f_extend_box_endpoint(current_demand_box)
+else
+    for i = 0 to array.size(current_supply_box) - 1
+        b = array.get(current_supply_box, i)
+        if not na(b)
+            box.delete(b)
+        p = array.get(current_supply_poi, i)
+        if not na(p)
+            box.delete(p)
+    for i = 0 to array.size(current_demand_box) - 1
+        b = array.get(current_demand_box, i)
+        if not na(b)
+            box.delete(b)
+        p = array.get(current_demand_poi, i)
+        if not na(p)
+            box.delete(p)
+    for i = 0 to array.size(supply_bos) - 1
+        b = array.get(supply_bos, i)
+        if not na(b)
+            box.delete(b)
+    for i = 0 to array.size(demand_bos) - 1
+        b = array.get(demand_bos, i)
+        if not na(b)
+            box.delete(b)
+            
+    array.fill(current_supply_box, na)
+    array.fill(current_demand_box, na)
+    array.fill(current_supply_poi, na)
+    array.fill(current_demand_poi, na)
+    array.fill(supply_bos, na)
+    array.fill(demand_bos, na)
+
+h = ta.highest(high, swing_length * 2 + 1)
+l = ta.lowest(low, swing_length * 2 + 1)
+f_isMin(len) =>
+    l == low[len]
+f_isMax(len) =>
+    h == high[len]
+
+var dirUp = false
+var lastLow = high * 100
+var lastHigh = 0.0
+var timeLow = bar_index
+var timeHigh = bar_index
+var line li = na
+
+f_drawLine() =>
+    _li_color = (show_smc and show_zigzag) ? zigzag_color : color.new(#ffffff, 100)
+    line.new(timeHigh - swing_length, lastHigh, timeLow - swing_length, lastLow, xloc.bar_index, color=_li_color, width=2, force_overlay=true)
+
+if show_smc and _activated
+    if dirUp
+        if f_isMin(swing_length) and low[swing_length] < lastLow
+            lastLow := low[swing_length]
+            timeLow := bar_index
+            line.delete(li)
+            li := f_drawLine()
+            li
+
+        if f_isMax(swing_length) and high[swing_length] > lastLow
+            lastHigh := high[swing_length]
+            timeHigh := bar_index
+            dirUp := false
+            li := f_drawLine()
+            li
+
+    if not dirUp
+        if f_isMax(swing_length) and high[swing_length] > lastHigh
+            lastHigh := high[swing_length]
+            timeHigh := bar_index
+            line.delete(li)
+            li := f_drawLine()
+            li
+        if f_isMin(swing_length) and low[swing_length] < lastHigh
+            lastLow := low[swing_length]
+            timeLow := bar_index
+            dirUp := true
+            li := f_drawLine()
+            if f_isMax(swing_length) and high[swing_length] > lastLow
+                lastHigh := high[swing_length]
+                timeHigh := bar_index
+                dirUp := false
+                li := f_drawLine()
+                li
+else
+    if not na(li)
+        line.delete(li)
+        li := na
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 14 — ADD-ON: GAUSSIAN FILTER
+// ══════════════════════════════════════════════════════════════════════════
+
+group1 = "Gaussian Filter"
+int   length      = input.int(50,  "Length", group = group1)
+int   sigma       = input.int(10, "Sigma",  group = group1, tooltip = "Sigma defines the amount of smoothing")
+
+group2 = "Additional Features"
+bool  levels      = input.bool(false, "Show Levels", inline = "1", group = group2)
+bool  candles_c   = input.bool(false, "Candles Color", group = group2)
+
+group3 = "Colors"
+color colUp       = input.color(color.orange, "Up Trend Color", group = group3)
+color colDn       = input.color(color.orange, "Down Trend Color", group = group3)
+color change_col  = color.orange
+
+var   trendsd       = bool(na)             
+var   price       = float(na)           
+var   value       = array.new<float>() 
+var   point       = float(na)     
+var   index_dn    = 0            
+var   index_up    = 0           
+var   gauss_col   = color(na)  
+var   color_level = color(na)
+label lbl         = label(na)
+var   percent_change = 0.
+
+type GaussianFilterParams
+    int length
+    int sigma
+
+GaussianFilterParams filterParams = GaussianFilterParams.new(length, sigma)
+float atrsd   = ta.atr(200)
+
+method draw_label(string txt_, color color_, int index_, float value_, string price_, string size = size.normal)=>
+    label.new(chart.point.from_index(index_, value_),
+                 text         = txt_ + "\n" + price_,
+                 style        = label.style_label_left,
+                 color        = color(na), 
+                 textcolor    = color_, 
+                 size         = size,
+                 tooltip      = "Trend " + txt_ + " Level", 
+                 force_overlay = true)
+
+gaussian_filter(float src, GaussianFilterParams params) =>
+    var float[] weights = array.new_float(params.length)  
+    total = 0.0
+    pi = math.pi
+    for i = 0 to params.length - 1
+        weight = math.exp(-0.5 * math.pow((i - params.length / 2) / params.sigma, 2.0)) / math.sqrt(params.sigma * 2.0 * pi)
+        weights.set(i, weight)
+        total := total + weight
+
+    for i = 0 to params.length - 1
+        weights.set(i, weights.get(i) / total)
+
+    sum = 0.0
+    for i = 0 to params.length - 1
+        sum := sum + src[i] * weights.get(i)
+    sum
+
+smoothed     = gaussian_filter(close, filterParams)
+
+condition_up = ta.rising(smoothed, 4)
+condition_dn = ta.falling(smoothed, 4)
+
+switch 
+    condition_up =>
+        trendsd := true
+        gauss_col := colUp
+    condition_dn =>
+        trendsd := false
+        gauss_col := colDn
+
+col_trend_ch = (hl2 > smoothed and not trendsd ? change_col : hl2 < smoothed and trendsd ? change_col : gauss_col)
+
+p1 = plot(series = (show_gaussian and _activated) ? smoothed : na, color = col_trend_ch, title = "Gaussian Filter", linewidth = 1, force_overlay=true)
+p2 = plot(series = show_gaussian ? ta.sma(hl2, 5) : na, title = "Price", display = display.none, editable = false)
+
+if _activated and show_gaussian and levels
+    if condition_up and ta.change(trendsd)
+        point       := smoothed - atrsd
+        price       := math.round(close, 2)
+        color_level := colUp
+
+        if not na(point)
+            "Exit".draw_label(color.new(colDn, 40), index_dn, point[1], str.tostring(price) + "\n" + str.tostring(percent_change, format.percent), size.small)
+
+    if condition_dn and ta.change(trendsd)
+        point       := smoothed + atrsd
+        price       := math.round(close, 2)
+        color_level := colDn
+
+        if not na(point)
+            "Enter".draw_label(color.new(colUp, 40), index_up, point[1], str.tostring(price) + "\n" + str.tostring(percent_change, format.percent), size.small)
+
+    if not trendsd and not na(point)
+        lbl         := na
+        index_dn    := bar_index
+        lbl         := "Exit".draw_label(colDn, index_dn, point, str.tostring(percent_change, format.percent))
+        label.delete(lbl[1])
+
+    if trendsd and not na(point)
+        index_up    := bar_index
+        lbl         := na
+        lbl         := "Enter".draw_label(colUp, index_up, point, str.tostring(percent_change, format.percent))
+        label.delete(lbl[1])
+
+    percent_change := (close/price-1) * 100
+
+plotchar(_activated and show_gaussian and condition_up and ta.change(trendsd) ? smoothed : na, "Filter Up", "", location = location.absolute, size = size.tiny, color = colUp, force_overlay = true)
+plotchar(_activated and show_gaussian and condition_dn and ta.change(trendsd) ? smoothed : na, "Filter Dn", "", location = location.absolute, size = size.tiny, color = colDn, force_overlay = true)
+
+plot(_activated and show_gaussian and levels ? (ta.change(point) != 0 or na(point) ? na : point) : na, style = plot.style_linebr, color = bar_index % 3 == 0 ? color_level : color(na), linewidth = 3, editable = false, force_overlay=true) 
+
+coolor_candles = (_activated and show_gaussian and candles_c) ? col_trend_ch : color(na)
+
+if barstate.islast and not _activated
+    table.clear(infoTable, 0, 0, 1, 21)
+    if not na(_upperPriceTag)
+        label.delete(_upperPriceTag)
+        _upperPriceTag := na
+    if not na(_lowerPriceTag)
+        label.delete(_lowerPriceTag)
+        _lowerPriceTag := na
+    if not na(_buyTpPriceTag)
+        label.delete(_buyTpPriceTag)
+        _buyTpPriceTag := na
+    if not na(_sellTpPriceTag)
+        label.delete(_sellTpPriceTag)
+        _sellTpPriceTag := na
+    if not na(_riskBox)
+        box.delete(_riskBox)
+        _riskBox := na
+    if not na(_rewardBox)
+        box.delete(_rewardBox)
+        _rewardBox := na
+    if not na(_tradeLabel)
+        label.delete(_tradeLabel)
+        _tradeLabel := na
+    if not na(_tagEntry)
+        label.delete(_tagEntry)
+        _tagEntry := na
+    if not na(_tagStop)
+        label.delete(_tagStop)
+        _tagStop := na
+    if not na(_tagTarget)
+        label.delete(_tagTarget)
+        _tagTarget := na
+    if not na(_entryMarker)
+        label.delete(_entryMarker)
+        _entryMarker := na
+    if not na(_projBox1)
+        box.delete(_projBox1)
+        _projBox1 := na
+    if not na(_projBox2)
+        box.delete(_projBox2)
+        _projBox2 := na
+    if not na(_lastRenkoBox)
+        box.delete(_lastRenkoBox)
+        _lastRenkoBox := na
+    label.delete(lbl[1])

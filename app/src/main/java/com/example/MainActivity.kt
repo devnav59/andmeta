@@ -1,8 +1,10 @@
 package com.example
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -115,6 +117,26 @@ class MainActivity : ComponentActivity() {
                     hasOverlayPermission = Settings.canDrawOverlays(this)
                 }
 
+                val mediaProjectionManager = remember {
+                    context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                }
+
+                val screenCaptureLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.StartActivityForResult()
+                ) { result ->
+                    if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
+                        val dm = context.resources.displayMetrics
+                        com.example.service.ScreenScannerManager.initProjection(
+                            context = context,
+                            resultCode = result.resultCode,
+                            data = result.data!!,
+                            width = dm.widthPixels,
+                            height = dm.heightPixels,
+                            dpi = dm.densityDpi
+                        )
+                    }
+                }
+
                 LaunchedEffect(Unit) {
                     hasOverlayPermission = Settings.canDrawOverlays(context)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -208,6 +230,20 @@ class MainActivity : ComponentActivity() {
                                     unselectedTextColor = TextSecondary
                                 )
                             )
+
+                            NavigationBarItem(
+                                selected = selectedScreen == 4,
+                                onClick = { selectedScreen = 4 },
+                                icon = { Icon(Icons.Default.PlayArrow, contentDescription = "Auto Trader") },
+                                label = { Text("اتوتریدر", fontSize = 11.sp) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = Color.Black,
+                                    selectedTextColor = GoldAccent,
+                                    indicatorColor = GoldAccent,
+                                    unselectedIconColor = TextSecondary,
+                                    unselectedTextColor = TextSecondary
+                                )
+                            )
                         }
                     }
                 ) { innerPadding ->
@@ -258,6 +294,14 @@ class MainActivity : ComponentActivity() {
                                 1 -> NewOrderTab()
                                 2 -> PositionsTab(onNavigateToNewOrder = { selectedScreen = 1 })
                                 3 -> EaGuideTab()
+                                4 -> com.example.ui.tabs.AutoTraderTab(
+                                    onRequestScreenCapture = {
+                                        screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
+                                    },
+                                    onToggleScannerBox = {
+                                        com.example.service.FloatingBubbleService.toggleScanner(context)
+                                    }
+                                )
                             }
                         }
                     }
