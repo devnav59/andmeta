@@ -36,7 +36,7 @@
             android:name=".service.FloatingBubbleService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="dataSync|mediaProjection" />
+            android:foregroundServiceType="dataSync" />
 
         <service
             android:name=".service.TradingViewNotificationListener"
