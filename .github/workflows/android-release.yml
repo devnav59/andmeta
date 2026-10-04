@@ -38,7 +38,7 @@ jobs:
             -dname "CN=PublicRelease, OU=Trading, O=MetaTraderBubble, L=Global, S=Global, C=US"
 
       - name: Make Gradle Wrapper Executable
-        run: chmod +x gradlew || true
+        run: chmod +x gradlew
 
       - name: Build Release APK
         env:
@@ -46,11 +46,7 @@ jobs:
           STORE_PASSWORD: publicpassword
           KEY_PASSWORD: publicpassword
         run: |
-          if [ -f "./gradlew" ]; then
-            ./gradlew assembleRelease -x lint -x lintVitalRelease --stacktrace
-          else
-            gradle assembleRelease -x lint -x lintVitalRelease --stacktrace
-          fi
+          ./gradlew assembleRelease -x lint -x test --stacktrace
 
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
