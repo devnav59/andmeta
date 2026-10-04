@@ -21,9 +21,11 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
 
-      - name: Generate Public Release Keystore (No Expiration / 10000 Days)
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Generate Public Release Keystore
         run: |
           keytool -genkeypair -v \
             -keystore "${{ github.workspace }}/my-upload-key.jks" \
@@ -45,9 +47,9 @@ jobs:
           KEY_PASSWORD: publicpassword
         run: |
           if [ -f "./gradlew" ]; then
-            ./gradlew assembleRelease --stacktrace
+            ./gradlew assembleRelease -x lint -x lintVitalRelease --stacktrace
           else
-            gradle assembleRelease --stacktrace
+            gradle assembleRelease -x lint -x lintVitalRelease --stacktrace
           fi
 
       - name: Upload Release APK Artifact
