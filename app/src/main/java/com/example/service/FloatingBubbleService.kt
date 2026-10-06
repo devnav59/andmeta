@@ -114,10 +114,8 @@ class FloatingBubbleService : Service() {
 
     private fun startForegroundWithTypes() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            var serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            }
+            val serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
             startForeground(NOTIFICATION_ID, buildNotification(), serviceType)
         } else {
             startForeground(NOTIFICATION_ID, buildNotification())
