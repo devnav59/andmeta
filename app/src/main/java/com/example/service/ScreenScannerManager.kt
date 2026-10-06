@@ -89,6 +89,17 @@ object ScreenScannerManager {
             val projectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = projectionManager.getMediaProjection(resultCode, data)
 
+            val projectionCallback = object : MediaProjection.Callback() {
+                override fun onStop() {
+                    super.onStop()
+                    _hasProjectionPermission.value = false
+                    _isScannerActive.value = false
+                    handler.removeCallbacks(scanRunnable)
+                    TradingRepository.appendAutoTradeLog("⚠️ نشست اسکن صفحه به پایان رسید")
+                }
+            }
+            mediaProjection?.registerCallback(projectionCallback, handler)
+
             imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
             virtualDisplay = mediaProjection?.createVirtualDisplay(
                 "SignalScannerDisplay",

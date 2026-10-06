@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
@@ -53,6 +54,12 @@ class FloatingBubbleService : Service() {
         const val ACTION_SHOW_SCANNER = "ACTION_SHOW_SCANNER"
         const val ACTION_HIDE_SCANNER = "ACTION_HIDE_SCANNER"
         const val ACTION_TOGGLE_SCANNER = "ACTION_TOGGLE_SCANNER"
+        const val ACTION_START_PROJECTION = "ACTION_START_PROJECTION"
+        const val EXTRA_PROJECTION_RESULT_CODE = "EXTRA_PROJECTION_RESULT_CODE"
+        const val EXTRA_PROJECTION_DATA = "EXTRA_PROJECTION_DATA"
+        const val EXTRA_PROJECTION_WIDTH = "EXTRA_PROJECTION_WIDTH"
+        const val EXTRA_PROJECTION_HEIGHT = "EXTRA_PROJECTION_HEIGHT"
+        const val EXTRA_PROJECTION_DPI = "EXTRA_PROJECTION_DPI"
 
         fun start(context: Context) {
             val intent = Intent(context, FloatingBubbleService::class.java).apply {
@@ -78,15 +85,50 @@ class FloatingBubbleService : Service() {
             }
             context.startService(intent)
         }
+
+        fun startProjection(
+            context: Context,
+            resultCode: Int,
+            data: Intent,
+            width: Int,
+            height: Int,
+            dpi: Int
+        ) {
+            val intent = Intent(context, FloatingBubbleService::class.java).apply {
+                action = ACTION_START_PROJECTION
+                putExtra(EXTRA_PROJECTION_RESULT_CODE, resultCode)
+                putExtra(EXTRA_PROJECTION_DATA, data)
+                putExtra(EXTRA_PROJECTION_WIDTH, width)
+                putExtra(EXTRA_PROJECTION_HEIGHT, height)
+                putExtra(EXTRA_PROJECTION_DPI, dpi)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun startForegroundWithTypes() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            var serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                serviceType = serviceType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            }
+            startForeground(NOTIFICATION_ID, buildNotification(), serviceType)
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
+        startForegroundWithTypes()
 
         TradingRepository.setServiceRunning(true)
         bubbleLifecycleOwner.handleOnStart()
@@ -104,6 +146,8 @@ class FloatingBubbleService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForegroundWithTypes()
+
         when (intent?.action) {
             ACTION_STOP -> {
                 stopSelf()
@@ -112,6 +156,23 @@ class FloatingBubbleService : Service() {
             ACTION_SHOW_SCANNER -> showScannerTarget()
             ACTION_HIDE_SCANNER -> hideScannerTarget()
             ACTION_TOGGLE_SCANNER -> toggleScannerTarget()
+            ACTION_START_PROJECTION -> {
+                val resultCode = intent.getIntExtra(EXTRA_PROJECTION_RESULT_CODE, 0)
+                val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(EXTRA_PROJECTION_DATA, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(EXTRA_PROJECTION_DATA)
+                }
+                val width = intent.getIntExtra(EXTRA_PROJECTION_WIDTH, resources.displayMetrics.widthPixels)
+                val height = intent.getIntExtra(EXTRA_PROJECTION_HEIGHT, resources.displayMetrics.heightPixels)
+                val dpi = intent.getIntExtra(EXTRA_PROJECTION_DPI, resources.displayMetrics.densityDpi)
+
+                if (resultCode != 0 && data != null) {
+                    ScreenScannerManager.initProjection(this, resultCode, data, width, height, dpi)
+                    showScannerTarget()
+                }
+            }
         }
         return START_STICKY
     }

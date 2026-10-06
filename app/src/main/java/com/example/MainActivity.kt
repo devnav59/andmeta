@@ -126,7 +126,7 @@ class MainActivity : ComponentActivity() {
                 ) { result ->
                     if (result.resultCode == android.app.Activity.RESULT_OK && result.data != null) {
                         val dm = context.resources.displayMetrics
-                        com.example.service.ScreenScannerManager.initProjection(
+                        com.example.service.FloatingBubbleService.startProjection(
                             context = context,
                             resultCode = result.resultCode,
                             data = result.data!!,
@@ -296,6 +296,7 @@ class MainActivity : ComponentActivity() {
                                 3 -> EaGuideTab()
                                 4 -> com.example.ui.tabs.AutoTraderTab(
                                     onRequestScreenCapture = {
+                                        com.example.service.FloatingBubbleService.start(context)
                                         screenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent())
                                     },
                                     onToggleScannerBox = {
